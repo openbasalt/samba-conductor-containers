@@ -31,11 +31,14 @@ func (c *Config) managedOptions() map[string]string {
 	if len(c.Forwarders) > 0 {
 		o["dns forwarder"] = strings.Join(c.Forwarders, " ")
 	}
+	// samba_dnsupdate registers the DC's records through samba-tool (DNS
+	// RPC) instead of nsupdate, which the image does not ship.
+	o["dns update command"] = "/usr/sbin/samba_dnsupdate --use-samba-tool"
 	switch c.NetworkMode {
 	case "bridge":
 		// Behind published ports: DNS records must carry the host's
 		// address, not the container's.
-		o["dns update command"] = "/usr/sbin/samba_dnsupdate --current-ip=" + c.HostIP
+		o["dns update command"] = "/usr/sbin/samba_dnsupdate --use-samba-tool --current-ip=" + c.HostIP
 	case "host":
 		// Only the advertised address and loopback, so the host's other
 		// services (systemd-resolved's stub on 127.0.0.53, libvirt's DNS)

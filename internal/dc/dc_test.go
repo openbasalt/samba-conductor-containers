@@ -58,12 +58,12 @@ func TestManagedOptions(t *testing.T) {
 	if o["interfaces"] != "192.0.2.10 lo" || o["bind interfaces only"] != "yes" || o["acl_xattr:security_acl_name"] != "user.NTACL" {
 		t.Fatalf("host mode: %v", o)
 	}
-	if _, ok := o["dns update command"]; ok {
-		t.Fatal("host mode must not rewrite the DNS update address")
+	if o["dns update command"] != "/usr/sbin/samba_dnsupdate --use-samba-tool" {
+		t.Fatalf("host mode DNS update: %q", o["dns update command"])
 	}
 	c.NetworkMode = "bridge"
 	o = c.managedOptions()
-	if o["dns update command"] != "/usr/sbin/samba_dnsupdate --current-ip=192.0.2.10" || o["interfaces"] != "" {
+	if o["dns update command"] != "/usr/sbin/samba_dnsupdate --use-samba-tool --current-ip=192.0.2.10" || o["interfaces"] != "" {
 		t.Fatalf("bridge mode: %v", o)
 	}
 }
