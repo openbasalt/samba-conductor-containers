@@ -151,6 +151,11 @@ func Load(e envcfg.Env) (*Config, string, error) {
 		errs = append(errs, fmt.Errorf("SC_RPC_PORTS=%q: a range such as 49152-49159", c.RPCPorts))
 	}
 	c.JoinDC = e.Get("SC_JOIN_DC", "")
+	if c.JoinDC != "" && net.ParseIP(c.JoinDC) == nil {
+		// An address: the container resolves through itself, which cannot
+		// answer before the join.
+		errs = append(errs, fmt.Errorf("SC_JOIN_DC=%q: the IP address of an existing DC", c.JoinDC))
+	}
 	c.JoinUser = e.Get("SC_JOIN_USER", "Administrator")
 	if !accountRE.MatchString(c.JoinUser) {
 		errs = append(errs, fmt.Errorf("SC_JOIN_USER=%q is not an account name", c.JoinUser))

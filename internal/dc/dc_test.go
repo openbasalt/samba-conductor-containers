@@ -1,10 +1,13 @@
 package dc
 
 import (
+	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openbasalt/samba-conductor-containers/internal/envcfg"
 )
@@ -152,5 +155,55 @@ func TestUnicodePwd(t *testing.T) {
 	// base64(UTF-16LE("\"ab\""))
 	if got := unicodePwd("ab"); got != "IgBhAGIAIgA=" {
 		t.Fatalf("%s", got)
+	}
+}
+
+func TestFirstNameserver(t *testing.T) {
+	if got := firstNameserver("# x\nsearch a\nnameserver 127.0.0.1\nnameserver 10.0.0.1\n"); got != "127.0.0.1" {
+		t.Fatal(got)
+	}
+	if got := firstNameserver("options edns0\n"); got != "" {
+		t.Fatal(got)
+	}
+}
+
+func TestDNSRelay(t *testing.T) {
+	// An upstream that answers every UDP query with "pong" + the query.
+	up, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = up.Close() }()
+	go func() {
+		b := make([]byte, 512)
+		for {
+			n, from, err := up.ReadFrom(b)
+			if err != nil {
+				return
+			}
+			_, _ = up.WriteTo(append([]byte("pong:"), b[:n]...), from)
+		}
+	}()
+	// The relay must listen on a port of its own here (53 needs root).
+	upPort := up.LocalAddr().(*net.UDPAddr).Port
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	relay, err := startDNSRelayPort(ctx, "127.0.0.1:0", "127.0.0.1", upPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.Close()
+	c, err := net.Dial("udp", relay.udp.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := c.Write([]byte("q1")); err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 64)
+	n, err := c.Read(b)
+	if err != nil || string(b[:n]) != "pong:q1" {
+		t.Fatalf("%q %v", b[:n], err)
 	}
 }

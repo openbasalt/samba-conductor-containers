@@ -14,3 +14,9 @@ services:
     dns_search: !reset []
     environment:
       SC_NETWORK_MODE: host
+    # With host networking the engine gives the container a copy of the
+    # host's resolv.conf (and refuses a dns option); the DC must resolve
+    # through itself, or replication and samba_dnsupdate cannot find the
+    # other DCs. Samba forwards every other name to SC_DNS_FORWARDERS.
+    volumes:
+      - ./addons/dc-resolv.conf:/etc/resolv.conf:ro

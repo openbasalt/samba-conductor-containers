@@ -323,18 +323,27 @@ func prepareRuntime() error {
 func (r *Runner) ensureSelfResolver() {
 	const p = "/etc/resolv.conf"
 	b, _ := os.ReadFile(p)
+	if firstNameserver(string(b)) == "127.0.0.1" {
+		return
+	}
 	want := fmt.Sprintf("search %s\nnameserver 127.0.0.1\n", r.Cfg.DNSDomain())
-	if string(b) == want {
-		return
-	}
-	if r.Cfg.NetworkMode == "bridge" && strings.Contains(string(b), "nameserver 127.0.0.1") {
-		return
-	}
 	if err := os.WriteFile(p, []byte(want), 0o644); err != nil {
-		r.logf("WARNING: cannot point /etc/resolv.conf at the DC itself (%v): the resolver it names must forward %s to this DC", err, r.Cfg.DNSDomain())
+		r.logf("WARNING: /etc/resolv.conf does not name the DC itself and cannot be changed (%v): mount a resolv.conf with "+
+			"nameserver 127.0.0.1 (addons/host-network.yaml does), or make the resolver it names forward %s to this DC", err, r.Cfg.DNSDomain())
 		return
 	}
 	r.logf("resolver: this DC (127.0.0.1), search %s", r.Cfg.DNSDomain())
+}
+
+// firstNameserver returns the first nameserver of a resolv.conf.
+func firstNameserver(s string) string {
+	for _, l := range strings.Split(s, "\n") {
+		f := strings.Fields(l)
+		if len(f) >= 2 && f[0] == "nameserver" {
+			return f[1]
+		}
+	}
+	return ""
 }
 
 // exportKrb5 publishes the realm's krb5.conf for the other containers.

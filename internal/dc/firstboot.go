@@ -119,6 +119,16 @@ func (r *Runner) join(ctx context.Context) error {
 		return err
 	}
 	env := []string{"KRB5_CONFIG=" + krb5, "PASSWD_FILE=" + pwFile}
+	// The container resolves through itself; until this DC runs, queries
+	// go to the DC being joined.
+	if firstNameserver(readFileString("/etc/resolv.conf")) == "127.0.0.1" {
+		relay, err := startDNSRelay(ctx, "127.0.0.1:53", c.JoinDC)
+		if err != nil {
+			return fmt.Errorf("DNS relay to %s for the join: %w", c.JoinDC, err)
+		}
+		defer relay.Close()
+		r.logf("DNS for the join: relayed from 127.0.0.1 to %s", c.JoinDC)
+	}
 	if err := r.checkSkew(ctx); err != nil {
 		return err
 	}
@@ -266,4 +276,9 @@ func (p *prefixWriter) Write(b []byte) (int, error) {
 		}
 	}
 	return len(b), nil
+}
+
+func readFileString(p string) string {
+	b, _ := os.ReadFile(p)
+	return string(b)
 }
