@@ -1,0 +1,243 @@
+# syntax=docker/dockerfile:1.10
+# check=skip=SecretsUsedInArgOrEnv
+# (CREDENTIALS_DIRECTORY names a directory of files, not a secret.)
+# Samba Conductor container images. One file, five targets:
+#
+#   dc         samba-conductor-dc       Samba AD DC + chronyd + conductor-helper (+ conductor-backup for restores)
+#   conductor  samba-conductor          conductor (with Samba's GPO tooling)
+#   idp        samba-conductor-idp      conductor-idp (distroless)
+#   sync       samba-conductor-sync     conductor-sync (distroless)
+#   backup     samba-conductor-backup   conductor-backup (distroless)
+#
+# The component binaries come from the released .deb packages (verified:
+# scripts/fetch-debs.sh), never from a separate compile, so an image and a
+# package of the same version run the same bytes. Built by build-local.sh,
+# which passes the inputs of versions.env and the "debs" build context.
+
+ARG DEBIAN_IMAGE=debian:13-slim
+ARG DISTROLESS_IMAGE=gcr.io/distroless/static-debian13:nonroot
+ARG GO_IMAGE=golang:1.27.0-trixie
+
+# ---- sc-dc-init and sc-setup (this repository's own code) ----
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS gobuild
+ARG TARGETARCH
+ARG IMAGE_VERSION=0.0.0-dev
+WORKDIR /src
+COPY go.mod ./
+COPY cmd/ cmd/
+COPY internal/ internal/
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOWORK=off
+RUN --mount=type=cache,id=sc-containers-gobuild,target=/root/.cache/go-build \
+    GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w -buildid= -X main.version=${IMAGE_VERSION}" -o /out/sc-dc-init ./cmd/sc-dc-init && \
+    GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w -buildid= -X main.version=${IMAGE_VERSION}" -o /out/sc-setup ./cmd/sc-setup
+
+# ---- the component packages, verified, unpacked ----
+FROM ${DEBIAN_IMAGE} AS fetch
+ARG TARGETARCH
+ARG SC_SOURCE=apt
+ARG APT_URL=https://obpkg.org/apt
+ARG APT_SUITE=stable
+ARG CONDUCTOR_VERSION
+ARG IDP_VERSION
+ARG SYNC_VERSION
+ARG BACKUP_VERSION
+SHELL ["/bin/sh", "-eu", "-c"]
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends curl gpgv ca-certificates >/dev/null && \
+    rm -rf /var/lib/apt/lists/*
+COPY keys/openbasalt-release-key.gpg /keys/
+COPY scripts/fetch-debs.sh /usr/local/bin/
+COPY --from=debs / /in/
+RUN APT_URL="$APT_URL" APT_SUITE="$APT_SUITE" fetch-debs.sh "$SC_SOURCE" "$TARGETARCH" /debs \
+      "conductor=${CONDUCTOR_VERSION:-*}" "conductor-idp=${IDP_VERSION:-*}" \
+      "conductor-sync=${SYNC_VERSION:-*}" "conductor-backup=${BACKUP_VERSION:-*}" && \
+    for p in conductor conductor-idp conductor-sync conductor-backup; do \
+      install -d "/x/$p" && dpkg-deb -x "/debs/$p.deb" "/x/$p"; \
+      install -d "/lic/$p" && \
+      cp "/x/$p/usr/share/doc/$p/copyright" "/x/$p/usr/share/doc/$p/NOTICE" "/x/$p/usr/share/doc/$p/THIRD-PARTY-LICENSES.gz" "/lic/$p/"; \
+    done
+
+# ---- Debian base of the DC and conductor images ----
+FROM ${DEBIAN_IMAGE} AS debian-base
+ARG DEBIAN_SNAPSHOT=
+SHELL ["/bin/sh", "-eu", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
+# Debian packages from a pinned snapshot.debian.org timestamp
+# (versions.env), so a rebuild installs the same package versions. Plain
+# HTTP (the slim image has no CA bundle yet): apt verifies the signed
+# InRelease with the Debian archive keyring, as with the default mirrors.
+RUN if [ -n "$DEBIAN_SNAPSHOT" ]; then \
+      printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s\nSuites: trixie trixie-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\nCheck-Valid-Until: no\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s\nSuites: trixie-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.pgp\nCheck-Valid-Until: no\n' \
+        "$DEBIAN_SNAPSHOT" "$DEBIAN_SNAPSHOT" >/etc/apt/sources.list.d/debian.sources; \
+    fi
+# No documentation, manual pages or translations in the images (the
+# copyright files stay: they are the license notices).
+RUN printf '%s\n' 'path-exclude=/usr/share/doc/*' 'path-include=/usr/share/doc/*/copyright' \
+      'path-exclude=/usr/share/man/*' 'path-exclude=/usr/share/info/*' 'path-exclude=/usr/share/locale/*' \
+      'path-include=/usr/share/locale/locale.alias' 'path-exclude=/usr/share/lintian/*' \
+      >/etc/dpkg/dpkg.cfg.d/01-samba-conductor-excludes
+# Fixed IDs, the same in every image of the stack: the sockets between the
+# containers check the peer's UID (SO_PEERCRED).
+RUN groupadd --system --gid 2093 conductor && \
+    groupadd --system --gid 2094 conductor-sync && \
+    groupadd --system --gid 2095 conductor-idp && \
+    groupadd --system --gid 2096 example-rp && \
+    groupadd --system --gid 2097 conductor-backup && \
+    useradd --system --uid 2093 --gid 2093 --groups conductor-idp --home-dir /var/lib/conductor --no-create-home --shell /usr/sbin/nologin conductor && \
+    useradd --system --uid 2094 --gid 2094 --groups conductor --home-dir /var/lib/conductor-sync --no-create-home --shell /usr/sbin/nologin conductor-sync && \
+    useradd --system --uid 2095 --gid 2095 --groups conductor --home-dir /var/lib/conductor-idp --no-create-home --shell /usr/sbin/nologin conductor-idp && \
+    useradd --system --uid 2096 --gid 2096 --no-create-home --shell /usr/sbin/nologin example-rp && \
+    useradd --system --uid 2097 --gid 2097 --home-dir /var/lib/conductor-backup --no-create-home --shell /usr/sbin/nologin conductor-backup
+
+# ---- samba-conductor-dc ----
+FROM debian-base AS dc
+ARG IMAGE_VERSION=0.0.0-dev
+ARG TARGETARCH
+# samba-ad-dc pulls samba, winbind and python3-samba (samba-tool);
+# samba-ad-provision holds the schema files provision and join need; chrony
+# serves signed time; ldb-tools for the healthcheck; acl/attr for sysvol.
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends samba-ad-dc samba-ad-provision chrony ldb-tools acl attr ca-certificates >/dev/null && \
+    # Nothing installs packages at run time: no apt in the image.
+    dpkg --purge --force-remove-protected apt libapt-pkg7.0 >/dev/null && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*.bin /var/log/apt /var/log/dpkg.log /var/cache/ldconfig/aux-cache && \
+    # Fresh volumes must start empty: sc-dc-init decides from them.
+    rm -rf /var/lib/samba/* /etc/samba/* && \
+    install -d -m 0755 /usr/share/samba-conductor /var/lib/sc-public /var/lib/sc-issued /etc/sc && \
+    install -d -m 0750 -g conductor /run/conductor-helper && \
+    install -d -m 0700 -o conductor -g conductor /var/lib/conductor && \
+    install -d -m 0700 -o conductor-backup -g conductor-backup /var/lib/conductor-backup && \
+    printf 'IMAGE_VERSION=%s\nSAMBA_VERSION=%s\n' "$IMAGE_VERSION" "$(dpkg-query -W -f '${Version}' samba)" >/usr/share/samba-conductor/image.env
+COPY --from=fetch /x/conductor/usr/bin/conductor-helper /usr/bin/
+COPY --from=fetch /x/conductor-backup/usr/bin/conductor-backup /usr/bin/
+COPY --from=fetch /debs/conductor.version /debs/conductor-backup.version /usr/share/samba-conductor/
+COPY --from=fetch /lic/conductor/ /usr/share/doc/conductor/
+COPY --from=fetch /lic/conductor-backup/ /usr/share/doc/conductor-backup/
+COPY --from=gobuild /out/sc-dc-init /usr/bin/
+COPY images/dc/chrony.conf /usr/share/samba-conductor/
+COPY images/IMAGE-LICENSES /usr/share/doc/samba-conductor/
+COPY LICENSE /usr/share/doc/samba-conductor/
+RUN printf 'CONDUCTOR_VERSION=%s\nBACKUP_VERSION=%s\n' "$(cat /usr/share/samba-conductor/conductor.version)" \
+      "$(cat /usr/share/samba-conductor/conductor-backup.version)" >>/usr/share/samba-conductor/image.env
+# Samba's Kerberos configuration lives in the private directory; nothing
+# writes /etc/krb5.conf (the root file system is read-only).
+ENV KRB5_CONFIG=/var/lib/samba/private/krb5.conf
+HEALTHCHECK --interval=15s --timeout=10s --start-period=60s --retries=4 CMD ["/usr/bin/sc-dc-init", "health"]
+ENTRYPOINT ["/usr/bin/sc-dc-init"]
+LABEL org.opencontainers.image.title="samba-conductor-dc" \
+      org.opencontainers.image.description="Samba AD domain controller with conductor-helper (preview)" \
+      org.opencontainers.image.source="https://github.com/openbasalt/samba-conductor-containers" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0 AND GPL-3.0-or-later" \
+      org.opencontainers.image.vendor="OpenBasalt"
+
+# ---- samba-conductor ----
+FROM debian-base AS conductor
+ARG IMAGE_VERSION=0.0.0-dev
+# python3-samba: samba-tool, which conductor runs for GPO create/delete
+# with the signed-in user's Kerberos ticket; samba-dsdb-modules: the ldb
+# "ildap" backend samba-tool needs for ldap:// URLs (without it ldb falls
+# back to a backend that cannot bind with Kerberos).
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends python3-samba samba-dsdb-modules ca-certificates >/dev/null && \
+    dpkg --purge --force-remove-protected apt libapt-pkg7.0 >/dev/null && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*.bin /var/log/apt /var/log/dpkg.log /var/cache/ldconfig/aux-cache && \
+    rm -rf /etc/samba/* && \
+    # samba-tool's client configuration comes from the DC (realm, workgroup).
+    install -d -m 0755 /etc/samba && ln -s /var/lib/sc-public/smb.conf /etc/samba/smb.conf && \
+    install -d -m 0750 -g conductor /etc/conductor && \
+    install -d -m 0700 -o conductor -g conductor /var/lib/conductor && \
+    install -d -m 0500 -o conductor -g conductor /run/credentials/conductor && \
+    install -d -m 0750 -o conductor -g conductor-idp /run/conductor && \
+    install -d -m 0755 /var/lib/sc-public /var/lib/sc-issued /usr/share/samba-conductor
+COPY --from=fetch /x/conductor/usr/bin/conductor /usr/bin/
+COPY --from=fetch /debs/conductor.version /usr/share/samba-conductor/
+COPY --from=fetch /lic/conductor/ /usr/share/doc/conductor/
+COPY --from=gobuild /out/sc-setup /usr/bin/
+COPY images/IMAGE-LICENSES /usr/share/doc/samba-conductor/
+COPY LICENSE /usr/share/doc/samba-conductor/
+ENV CREDENTIALS_DIRECTORY=/run/credentials/conductor KRB5_CONFIG=/var/lib/sc-public/krb5.conf
+USER 2093:2093
+HEALTHCHECK --interval=15s --timeout=10s --start-period=20s --retries=4 CMD ["/usr/bin/conductor", "healthcheck"]
+ENTRYPOINT ["/usr/bin/conductor"]
+CMD ["serve", "--config", "/etc/conductor/conductor.toml"]
+LABEL org.opencontainers.image.title="samba-conductor" \
+      org.opencontainers.image.description="Samba Conductor: web administration and self-service for Samba AD" \
+      org.opencontainers.image.source="https://github.com/openbasalt/samba-conductor-containers" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0 AND GPL-3.0-or-later" \
+      org.opencontainers.image.vendor="OpenBasalt"
+
+# ---- directories of the distroless images, with their owners and modes
+# (a fresh named volume takes the owner and mode of its mount point) ----
+FROM ${DEBIAN_IMAGE} AS dirs
+SHELL ["/bin/sh", "-eu", "-c"]
+RUN d() { install -d -m "$1" -o "$2" -g "$3" "/tree/$4/$5"; } && \
+    d 0750 0 2095 idp etc/conductor-idp && d 0700 2095 2095 idp var/lib/conductor-idp && \
+    d 0500 2095 2095 idp run/credentials/conductor-idp && d 0750 2095 2093 idp run/conductor-idp && \
+    d 0750 2093 2095 idp run/conductor && \
+    d 0750 0 2094 sync etc/conductor-sync && d 0700 2094 2094 sync var/lib/conductor-sync && \
+    d 0500 2094 2094 sync run/credentials/conductor-sync && d 0750 2094 2093 sync run/conductor-sync && \
+    d 0750 0 2097 backup etc/conductor-backup && d 0700 2097 2097 backup var/lib/conductor-backup && \
+    d 0500 2097 2097 backup run/credentials/conductor-backup && d 0750 0 2093 backup run/conductor-helper && \
+    d 0700 2093 2093 backup var/lib/conductor && d 0755 0 0 backup etc/sc
+
+# ---- distroless base of the Go services ----
+FROM ${DISTROLESS_IMAGE} AS distroless-base
+COPY images/rootfs/etc/passwd images/rootfs/etc/group /etc/
+COPY --from=gobuild /out/sc-setup /usr/bin/
+COPY LICENSE /usr/share/doc/samba-conductor/
+
+# ---- samba-conductor-idp ----
+FROM distroless-base AS idp
+ARG IMAGE_VERSION=0.0.0-dev
+COPY --from=dirs /tree/idp/ /
+COPY --from=fetch /x/conductor-idp/usr/bin/conductor-idp /usr/bin/
+COPY --from=fetch /lic/conductor-idp/ /usr/share/doc/conductor-idp/
+ENV CREDENTIALS_DIRECTORY=/run/credentials/conductor-idp
+USER 2095:2095
+HEALTHCHECK --interval=15s --timeout=10s --start-period=20s --retries=4 CMD ["/usr/bin/conductor-idp", "-config", "/etc/conductor-idp/idp.toml", "healthcheck"]
+ENTRYPOINT ["/usr/bin/conductor-idp"]
+CMD ["-config", "/etc/conductor-idp/idp.toml", "serve"]
+LABEL org.opencontainers.image.title="samba-conductor-idp" \
+      org.opencontainers.image.description="Samba Conductor IdP: OpenID Connect and SAML backed by Samba AD" \
+      org.opencontainers.image.source="https://github.com/openbasalt/samba-conductor-containers" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.vendor="OpenBasalt"
+
+# ---- samba-conductor-sync ----
+FROM distroless-base AS sync
+ARG IMAGE_VERSION=0.0.0-dev
+COPY --from=dirs /tree/sync/ /
+COPY --from=fetch /x/conductor-sync/usr/bin/conductor-sync /usr/bin/
+COPY --from=fetch /lic/conductor-sync/ /usr/share/doc/conductor-sync/
+ENV CREDENTIALS_DIRECTORY=/run/credentials/conductor-sync
+USER 2094:2094
+HEALTHCHECK --interval=15s --timeout=10s --start-period=20s --retries=4 CMD ["/usr/bin/conductor-sync", "healthcheck", "--config", "/etc/conductor-sync/conductor-sync.toml"]
+ENTRYPOINT ["/usr/bin/conductor-sync"]
+CMD ["serve", "--config", "/etc/conductor-sync/conductor-sync.toml"]
+LABEL org.opencontainers.image.title="samba-conductor-sync" \
+      org.opencontainers.image.description="Samba Conductor sync: Samba AD to Google Workspace provisioning" \
+      org.opencontainers.image.source="https://github.com/openbasalt/samba-conductor-containers" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.vendor="OpenBasalt"
+
+# ---- samba-conductor-backup ----
+FROM distroless-base AS backup
+ARG IMAGE_VERSION=0.0.0-dev
+COPY --from=dirs /tree/backup/ /
+COPY --from=fetch /x/conductor-backup/usr/bin/conductor-backup /usr/bin/
+COPY --from=fetch /lic/conductor-backup/ /usr/share/doc/conductor-backup/
+ENV CREDENTIALS_DIRECTORY=/run/credentials/conductor-backup
+USER 2097:2097
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 CMD ["/usr/bin/conductor-backup", "healthcheck"]
+ENTRYPOINT ["/usr/bin/conductor-backup"]
+CMD ["run", "--scheduled", "--loop", "1m"]
+LABEL org.opencontainers.image.title="samba-conductor-backup" \
+      org.opencontainers.image.description="Samba Conductor backup: encrypted, signed Samba AD backups" \
+      org.opencontainers.image.source="https://github.com/openbasalt/samba-conductor-containers" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.vendor="OpenBasalt"

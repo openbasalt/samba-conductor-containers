@@ -1,0 +1,16 @@
+Licenses of this container image
+
+The Samba Conductor programs in this image (sc-dc-init, sc-setup and the
+component binaries: conductor, conductor-helper, conductor-idp,
+conductor-sync, conductor-backup) are licensed under the Apache License,
+Version 2.0 (/usr/share/doc/samba-conductor/LICENSE). Each component's NOTICE
+and the licenses of the Go modules linked into it are in
+/usr/share/doc/<component>/ (NOTICE, THIRD-PARTY-LICENSES.gz, copyright).
+
+The Debian packages in this image (Samba, Python, chrony and their
+dependencies) keep their own licenses, listed in
+/usr/share/doc/<package>/copyright. Samba is licensed under the GNU General
+Public License, version 3 or later. The corresponding source code of the
+Debian packages is published with each release of the containers
+repository (https://github.com/openbasalt/samba-conductor-containers);
+/usr/share/doc/samba-conductor/SOURCES, when present, says where.

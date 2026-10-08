@@ -1,0 +1,100 @@
+# Add-on: conductor-idp (OpenID Connect and SAML backed by the domain),
+# managed from conductor's "Single sign-on" section, with conductor's
+# second factor and shared passkeys (WebAuthn RP ID = the domain).
+#   COMPOSE_FILE=compose.yaml:addons/idp.yaml
+#   docker compose exec dc sc-dc-init account idp       (needs secrets/idp-ad-password)
+#   docker compose exec dc sc-dc-init dns-name conductor idp
+#   docker compose run --rm idp-setup
+#   docker compose up -d
+services:
+  dc:
+    secrets: [admin-password, idp-ad-password]
+
+  conductor:
+    # The conductor-idp group: conductor creates its 2FA socket for the IdP
+    # with that group (0660) on the mfa-run volume.
+    group_add: ["2095"]
+    volumes:
+      - mfa-run:/run/conductor
+      - idp-run:/run/conductor-idp
+
+  idp:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-idp:${SC_TAG:-latest}
+    user: "2095:2095"
+    # The conductor group: the management API socket goes to it (0660).
+    group_add: ["2093"]
+    restart: unless-stopped
+    depends_on:
+      dc:
+        condition: service_healthy
+      conductor:
+        condition: service_started
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    tmpfs:
+      - /tmp:mode=1777,size=16m
+    volumes:
+      - idp-etc:/etc/conductor-idp:ro
+      - idp-state:/var/lib/conductor-idp
+      - idp-cred:/run/credentials/conductor-idp:ro
+      - idp-run:/run/conductor-idp
+      - mfa-run:/run/conductor
+    dns: ["${SC_DC_ADDRESS:-${SC_NET:-172.30.93}.10}"]
+    dns_search: ["${SC_DNS_DOMAIN}"]
+    extra_hosts:
+      - "${SC_HOSTNAME:-dc1}.${SC_DNS_DOMAIN}:${SC_DC_ADDRESS:-${SC_NET:-172.30.93}.10}"
+    networks: [sc]
+    ports:
+      - "${SC_HOST_IP}:${SC_IDP_PORT:-9443}:9443/tcp"
+    mem_limit: 384m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+  # One-shot: idp.toml, the master key and the service account password
+  # handed over, conductor's [idp] and [webauthn] sections.
+  idp-setup:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-idp:${SC_TAG:-latest}
+    profiles: [setup]
+    user: "0:0"
+    entrypoint: ["/usr/bin/sc-setup", "idp"]
+    command: []
+    environment:
+      SC_REALM: ${SC_DNS_DOMAIN}
+      SC_DC_HOST: ${SC_HOSTNAME:-dc1}.${SC_DNS_DOMAIN}
+      SC_DC_ADDRESS: ${SC_DC_ADDRESS:-${SC_NET:-172.30.93}.10}
+      SC_TLS: ${SC_TLS:-self-signed}
+      SC_IDP_URL: ${SC_IDP_URL:-https://idp.${SC_DNS_DOMAIN}:9443}
+      SC_PUBLIC_URL: ${SC_PUBLIC_URL:-https://conductor.${SC_DNS_DOMAIN}:8443}
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    network_mode: none
+    volumes:
+      - idp-etc:/etc/conductor-idp
+      - idp-state:/var/lib/conductor-idp
+      - idp-cred:/run/credentials/conductor-idp
+      - conductor-etc:/etc/conductor
+      - dc-public:/var/lib/sc-public:ro
+      - dc-issued:/var/lib/sc-issued:ro
+    secrets: [idp-ad-password]
+    healthcheck:
+      disable: true
+
+volumes:
+  idp-etc:
+  idp-state:
+  idp-cred:
+  idp-run:
+  mfa-run:
+
+secrets:
+  idp-ad-password:
+    file: ./secrets/idp-ad-password

@@ -1,0 +1,16 @@
+# Add-on: the DC on the host's network (production-like, multi-DC, best
+# compatibility). Samba binds only SC_HOST_IP and loopback, so the host's
+# other services keep their ports; the host firewall must admit the DC's
+# ports (firewalld: the samba-dc service). The other services stay on the
+# bridge network and reach the DC at SC_HOST_IP: set
+# SC_DC_ADDRESS=<SC_HOST_IP> in .env too.
+#   COMPOSE_FILE=compose.yaml:addons/host-network.yaml
+services:
+  dc:
+    network_mode: host
+    networks: !reset {}
+    ports: !reset []
+    dns: !reset []
+    dns_search: !reset []
+    environment:
+      SC_NETWORK_MODE: host

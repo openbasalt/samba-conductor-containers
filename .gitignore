@@ -1,0 +1,6 @@
+/bin/
+/dist/
+temp/
+compose/*/secrets/
+compose/*/.env
+!compose/*/.env.example

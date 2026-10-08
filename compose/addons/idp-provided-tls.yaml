@@ -1,0 +1,12 @@
+# Add-on to idp.yaml with provided-tls.yaml: the IdP's web certificate
+# from your CA (secrets idp-tls-cert, idp-tls-key).
+#   COMPOSE_FILE=compose.yaml:addons/provided-tls.yaml:addons/idp.yaml:addons/idp-provided-tls.yaml
+services:
+  idp-setup:
+    secrets: [idp-ad-password, dc-tls-ca, idp-tls-cert, idp-tls-key]
+
+secrets:
+  idp-tls-cert:
+    file: ./secrets/idp-tls-cert
+  idp-tls-key:
+    file: ./secrets/idp-tls-key

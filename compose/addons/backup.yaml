@@ -1,0 +1,95 @@
+# Add-on: encrypted, signed domain backups. conductor-helper (in the DC)
+# takes the online backup over loopback with an account that holds only the
+# replication rights and encrypts it to the recipients; conductor-backup (no
+# capabilities) uploads, verifies, prunes and alerts, in place of the
+# systemd timer and path unit. Restore drills run on a drill host (package
+# install), never in these containers.
+#   COMPOSE_FILE=compose.yaml:addons/backup.yaml
+#   ./backup-recipients.txt: one age recipient per line (operators' offline keys, drill host)
+#   secrets/backup-account (make-secrets.sh), secrets/s3 (access_key_id/secret_access_key TOML)
+#   SC_BACKUP_S3_ENDPOINT, SC_BACKUP_S3_BUCKET (or SC_BACKUP_LOCAL_DIR) in .env
+#   docker compose up -d dc
+#   docker compose exec dc sc-dc-init account backup
+#   docker compose run --rm backup-setup                 (prints the DC's public signing key)
+#   docker compose up -d
+services:
+  dc:
+    environment:
+      SC_BACKUP: "on"
+    secrets: [admin-password, backup-account]
+    volumes:
+      - backup-state:/var/lib/conductor-backup
+      - ./backup-recipients.txt:/etc/sc/backup-recipients.txt:ro
+
+  conductor-backup:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-backup:${SC_TAG:-latest}
+    user: "2097:2097"
+    restart: unless-stopped
+    depends_on:
+      dc:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    volumes:
+      - backup-etc:/etc/conductor-backup:ro
+      - backup-state:/var/lib/conductor-backup
+      - backup-cred:/run/credentials/conductor-backup:ro
+      - helper-run:/run/conductor-helper
+      - backup-local:/var/backups/conductor-backup
+    dns: ["${SC_DC_ADDRESS:-${SC_NET:-172.30.93}.10}"]
+    networks: [sc]
+    mem_limit: 512m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+  backup-setup:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-backup:${SC_TAG:-latest}
+    profiles: [setup]
+    user: "0:0"
+    entrypoint: ["/usr/bin/sc-setup", "backup"]
+    command: []
+    environment:
+      SC_REALM: ${SC_DNS_DOMAIN}
+      SC_DC_HOST: ${SC_HOSTNAME:-dc1}.${SC_DNS_DOMAIN}
+      SC_HOSTNAME: ${SC_HOSTNAME:-dc1}
+      SC_BACKUP_S3_ENDPOINT: ${SC_BACKUP_S3_ENDPOINT:-}
+      SC_BACKUP_S3_REGION: ${SC_BACKUP_S3_REGION:-}
+      SC_BACKUP_S3_BUCKET: ${SC_BACKUP_S3_BUCKET:-}
+      SC_BACKUP_S3_PREFIX: ${SC_BACKUP_S3_PREFIX:-}
+      SC_BACKUP_S3_CA: ${SC_BACKUP_S3_CA:-}
+      SC_BACKUP_LOCAL_DIR: ${SC_BACKUP_LOCAL_DIR:-}
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    network_mode: none
+    volumes:
+      - backup-etc:/etc/conductor-backup
+      - backup-state:/var/lib/conductor-backup
+      - backup-cred:/run/credentials/conductor-backup
+      - backup-local:/var/backups/conductor-backup
+      - ./backup-recipients.txt:/etc/sc/backup-recipients.txt:ro
+    secrets: [s3]
+    healthcheck:
+      disable: true
+
+volumes:
+  backup-etc:
+  backup-state:
+  backup-cred:
+  backup-local:
+
+secrets:
+  backup-account:
+    file: ./secrets/backup-account
+  s3:
+    file: ./secrets/s3

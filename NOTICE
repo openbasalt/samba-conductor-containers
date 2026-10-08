@@ -1,0 +1,10 @@
+Samba Conductor: container images
+Copyright 2026 Edimar Cardoso and the Samba Conductor contributors.
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The images built from this repository also contain Debian packages (Samba,
+Python, chrony and their dependencies, under their own licenses, Samba
+under the GNU General Public License version 3 or later) and the
+Samba Conductor component packages with their own NOTICE and third-party
+license files. See images/IMAGE-LICENSES.

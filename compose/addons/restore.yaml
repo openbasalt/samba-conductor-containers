@@ -1,0 +1,24 @@
+# Add-on: full-forest recovery from a conductor-backup archive into this
+# host's DC (SC_MODE=restore). Never while another DC of the domain runs.
+#   COMPOSE_FILE=compose.yaml:addons/restore.yaml
+#   ./restore/conductor-backup.toml: realm, the destination, backup_public_keys = ["cbsig1:..."]
+#   secrets/age-identity (an operator's offline key), secrets/s3
+#   SC_RESTORE_CONFIRM=<REALM> and SC_HOSTNAME=<a new DC name> in .env
+#   docker compose up -d dc
+# Remove age-identity from the stack afterwards (the DC warns while it is
+# mounted), then follow the next steps the restore printed.
+services:
+  dc:
+    environment:
+      SC_MODE: restore
+      SC_RESTORE_CONFIRM: ${SC_RESTORE_CONFIRM:-}
+      SC_RESTORE_BACKUP: ${SC_RESTORE_BACKUP:-latest}
+    secrets: !override [age-identity, s3]
+    volumes:
+      - ./restore:/etc/sc/restore:ro
+
+secrets:
+  age-identity:
+    file: ./secrets/age-identity
+  s3:
+    file: ./secrets/s3

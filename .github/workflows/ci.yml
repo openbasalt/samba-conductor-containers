@@ -1,0 +1,76 @@
+# Continuous integration of the container images: the Go gates of
+# sc-dc-init and sc-setup, the five images built per architecture on native
+# runners from the packages pinned in versions.env (verified against the
+# OpenBasalt release key), and a smoke test of the single-DC stack: a fresh
+# provision, the healthchecks, idempotency on recreate and the security
+# assertions (no privileged mode, exact capabilities, read-only roots).
+# Nothing is pushed; no secret is used. Actions are pinned by commit SHA.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt, vet, staticcheck, tests
+        env:
+          GOWORK: "off"
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+          go test -race ./...
+
+  images:
+    needs: gates
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: build the five images (packages from the APT repository, verified)
+        run: ./build-local.sh --tag ci
+      - name: smoke test (single DC, bridge networking)
+        run: |
+          set -eu
+          cd compose
+          ip="$(hostname -I | awk '{print $1}')"
+          printf 'SC_DNS_DOMAIN=ci.example.test\nSC_NETBIOS=CI\nSC_HOSTNAME=dc1\nSC_HOST_IP=%s\nSC_TAG=ci\nSC_ALLOW_UNSYNCED_CLOCK=1\n' "$ip" >.env
+          ./make-secrets.sh
+          docker compose up -d dc
+          for i in $(seq 100); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q dc)")" = healthy ] && break
+            sleep 5
+          done
+          docker compose exec -T dc sc-dc-init health
+          docker compose up -d --force-recreate dc
+          for i in $(seq 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q dc)")" = healthy ] && break
+            sleep 5
+          done
+          docker compose exec -T dc sc-dc-init health
+          test "$(docker compose logs dc | grep -c 'provisioning CI.EXAMPLE.TEST')" = 1
+          id="$(docker compose ps -q dc)"
+          test "$(docker inspect -f '{{.HostConfig.Privileged}} {{.HostConfig.ReadonlyRootfs}}' "$id")" = "false true"
+          docker inspect -f '{{json .HostConfig.CapAdd}}' "$id" | grep -v -E 'SYS_ADMIN|SYS_TIME'
+          docker compose logs dc | tail -n 50
+          docker compose down -v

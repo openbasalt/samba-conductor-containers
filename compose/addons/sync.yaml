@@ -1,0 +1,88 @@
+# Add-on: conductor-sync (Samba AD -> Google Workspace), managed from
+# conductor's "Google Workspace sync" section; runs its schedule in process
+# (no systemd timer in a container). Starts in dry-run.
+#   COMPOSE_FILE=compose.yaml:addons/sync.yaml
+#   SC_SYNC_EMAIL_DOMAIN and SC_SYNC_GOOGLE_ADMIN in .env
+#   docker compose exec dc sc-dc-init account sync      (needs secrets/sync-ad-password)
+#   docker compose run --rm sync-setup
+#   docker compose up -d
+services:
+  dc:
+    secrets: [admin-password, sync-ad-password]
+
+  conductor:
+    volumes:
+      - sync-run:/run/conductor-sync
+
+  sync:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-latest}
+    user: "2094:2094"
+    group_add: ["2093"]
+    restart: unless-stopped
+    depends_on:
+      dc:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    tmpfs:
+      - /tmp:mode=1777,size=16m
+    volumes:
+      - sync-etc:/etc/conductor-sync:ro
+      - sync-state:/var/lib/conductor-sync
+      - sync-cred:/run/credentials/conductor-sync:ro
+      - sync-run:/run/conductor-sync
+    dns: ["${SC_DC_ADDRESS:-${SC_NET:-172.30.93}.10}"]
+    dns_search: ["${SC_DNS_DOMAIN}"]
+    extra_hosts:
+      - "${SC_HOSTNAME:-dc1}.${SC_DNS_DOMAIN}:${SC_DC_ADDRESS:-${SC_NET:-172.30.93}.10}"
+    networks: [sc]
+    mem_limit: 512m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+  sync-setup:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-latest}
+    profiles: [setup]
+    user: "0:0"
+    entrypoint: ["/usr/bin/sc-setup", "sync"]
+    command: []
+    environment:
+      SC_REALM: ${SC_DNS_DOMAIN}
+      SC_DC_HOST: ${SC_HOSTNAME:-dc1}.${SC_DNS_DOMAIN}
+      SC_DC_ADDRESS: ${SC_DC_ADDRESS:-${SC_NET:-172.30.93}.10}
+      SC_SYNC_EMAIL_DOMAIN: ${SC_SYNC_EMAIL_DOMAIN:-}
+      SC_SYNC_GOOGLE_ADMIN: ${SC_SYNC_GOOGLE_ADMIN:-}
+      SC_SYNC_USER_BASE: ${SC_SYNC_USER_BASE:-}
+      SC_SYNC_GOOGLE_API: ${SC_SYNC_GOOGLE_API:-}
+      SC_SYNC_GOOGLE_CA: ${SC_SYNC_GOOGLE_CA:-}
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    network_mode: none
+    volumes:
+      - sync-etc:/etc/conductor-sync
+      - sync-state:/var/lib/conductor-sync
+      - sync-cred:/run/credentials/conductor-sync
+      - conductor-etc:/etc/conductor
+      - dc-public:/var/lib/sc-public:ro
+    secrets: [sync-ad-password]
+    healthcheck:
+      disable: true
+
+volumes:
+  sync-etc:
+  sync-state:
+  sync-cred:
+  sync-run:
+
+secrets:
+  sync-ad-password:
+    file: ./secrets/sync-ad-password

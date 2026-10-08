@@ -1,0 +1,24 @@
+# Add-on: certificates from your CA instead of the DC's self-signed CA
+# (production). Secrets: dc-tls-cert, dc-tls-key (the DC, named
+# <SC_HOSTNAME>.<domain>), dc-tls-ca (the CA that signs them), and the web
+# certificates conductor-tls-cert / conductor-tls-key.
+#   COMPOSE_FILE=compose.yaml:addons/provided-tls.yaml   and SC_TLS=provided in .env
+# With the IdP add-on, also addons/idp-provided-tls.yaml.
+services:
+  dc:
+    secrets: [admin-password, dc-tls-cert, dc-tls-key, dc-tls-ca]
+
+  conductor-setup:
+    secrets: [admin-password, dc-tls-ca, conductor-tls-cert, conductor-tls-key]
+
+secrets:
+  dc-tls-cert:
+    file: ./secrets/dc-tls-cert
+  dc-tls-key:
+    file: ./secrets/dc-tls-key
+  dc-tls-ca:
+    file: ./secrets/dc-tls-ca
+  conductor-tls-cert:
+    file: ./secrets/conductor-tls-cert
+  conductor-tls-key:
+    file: ./secrets/conductor-tls-key

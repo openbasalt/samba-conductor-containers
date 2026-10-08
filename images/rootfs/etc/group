@@ -1,0 +1,10 @@
+root:x:0:
+tty:x:5:
+staff:x:50:
+nobody:x:65534:
+nonroot:x:65532:
+conductor:x:2093:conductor-sync,conductor-idp
+conductor-sync:x:2094:
+conductor-idp:x:2095:conductor
+example-rp:x:2096:
+conductor-backup:x:2097:

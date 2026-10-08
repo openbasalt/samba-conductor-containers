@@ -1,0 +1,18 @@
+# Add-on: this host's DC joins an existing domain as an additional DC
+# (SC_MODE=join) on the host's network. Run only the dc service here:
+#   COMPOSE_FILE=compose.yaml:addons/host-network.yaml:addons/join.yaml
+#   SC_JOIN_DC=<an existing DC's address> in .env; secrets/join-password
+#   docker compose up -d dc
+# Samba does not replicate SYSVOL: edit GPOs on one DC and copy sysvol to
+# the others (then samba-tool ntacl sysvolreset).
+services:
+  dc:
+    environment:
+      SC_MODE: join
+      SC_JOIN_DC: ${SC_JOIN_DC:?set SC_JOIN_DC in .env}
+      SC_JOIN_USER: ${SC_JOIN_USER:-Administrator}
+    secrets: !override [join-password]
+
+secrets:
+  join-password:
+    file: ./secrets/join-password
