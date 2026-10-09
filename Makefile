@@ -16,7 +16,7 @@ GOVULNCHECK := $(TOOLS_DIR)/govulncheck-$(GOVULNCHECK_VERSION)
 VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test check fmt vet staticcheck vulncheck tools images
+.PHONY: build test check fmt vet staticcheck vulncheck tools images compose-tag
 
 build:
 	mkdir -p bin
@@ -26,7 +26,11 @@ build:
 test:
 	go test -race ./...
 
-check: fmt vet staticcheck vulncheck test
+check: fmt vet staticcheck vulncheck test compose-tag
+
+# The compose files default to IMAGE_VERSION (versions.env).
+compose-tag:
+	scripts/check-compose-tag.sh
 
 fmt:
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi

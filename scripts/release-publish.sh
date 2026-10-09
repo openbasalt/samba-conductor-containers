@@ -15,15 +15,19 @@
 #       ("<image> <tag> <index digest> <amd64 digest> <arm64 digest>") and
 #       RESULT/staged.json (the attest job's matrix).
 #
-#   promote RESULT
+#   promote RESULT SBOM_DIR
 #       Per image: copy the staged index to the public registry under the
 #       immutable tag and "testing" (refused if the immutable tag exists),
 #       check the digest did not change, sign and attest there too, verify
-#       the signature against this workflow's identity, write
-#       RESULT/IMAGES.txt ("<registry>/<image>:<tag>@<digest>").
+#       the signature against this workflow's identity; then set "testing"
+#       on the staged index in GHCR as well (GHCR is the second public
+#       registry, with the same digests). Writes RESULT/IMAGES.txt
+#       ("<registry>/<image>:<tag>@<digest>", both registries).
 #
 # Registries: STAGING (default ghcr.io/openbasalt) and PUBLIC (default
-# docker.io/openbasalt). Never touches "latest" or version tags.
+# docker.io/openbasalt). Never touches "latest" or version tags: those are
+# set by scripts/release-promote.sh (promote workflow) after the testing
+# images have been validated.
 # NO_SIGN=1 skips cosign: only for a local test of the copy steps against a
 # throwaway registry (keyless signing needs the workflow's OIDC token).
 set -euo pipefail
@@ -90,8 +94,16 @@ promote)
     cosign attest --yes --type cyclonedx --predicate "$sboms/$img-amd64.cdx.json" "$dst@$da"
     cosign attest --yes --type cyclonedx --predicate "$sboms/$img-arm64.cdx.json" "$dst@$dr"
     cosign verify "$dst@$di" --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$IDENTITY_RE" >/dev/null
+    # GHCR already holds the signed, attested index under the immutable
+    # tag (index step); only the moving "testing" tag is added.
+    stg="$STAGING/$img"
+    [ "$(digest_of "$stg:$tag")" = "$di" ] || die "$stg:$tag: not the staged digest"
+    docker buildx imagetools create --tag "$stg:testing" "$stg@$di"
+    [ "$(digest_of "$stg:testing")" = "$di" ] || die "$stg:testing: the digest changed in the copy"
+    cosign verify "$stg@$di" --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$IDENTITY_RE" >/dev/null
     echo "$dst:$tag@$di" >>"$res/IMAGES.txt"
-    echo "release-publish: published $dst:$tag@$di (and :testing)"
+    echo "$stg:$tag@$di" >>"$res/IMAGES.txt"
+    echo "release-publish: published $dst:$tag@$di and $stg:$tag@$di (and :testing in both)"
   done <"$res/staged.txt"
   ;;
 *)

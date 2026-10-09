@@ -22,7 +22,7 @@ services:
       - ./backup-recipients.txt:/etc/sc/backup-recipients.txt:ro
 
   conductor-backup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-backup:${SC_TAG:-latest}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-backup:${SC_TAG:-0.1.0}
     user: "2097:2097"
     restart: unless-stopped
     depends_on:
@@ -50,7 +50,7 @@ services:
       options: {max-size: 10m, max-file: "3"}
 
   backup-setup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-backup:${SC_TAG:-latest}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-backup:${SC_TAG:-0.1.0}
     profiles: [setup]
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "backup"]
