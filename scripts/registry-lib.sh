@@ -8,7 +8,7 @@
 # registry error apart from an absent tag or a digest mismatch, so a refusal
 # is never decided on a failed lookup.
 
-# retry TRIES DELAY CMD...: run CMD until it succeeds, at most TRIES times,
+# retry TRIES DELAY CMD [ARGS]: run CMD until it succeeds, at most TRIES times,
 # waiting DELAY seconds after the first failure, 2*DELAY after the second
 # and so on. Returns the status of the last attempt.
 retry() {
@@ -30,7 +30,7 @@ retry() {
 REGISTRY_TRIES="${REGISTRY_TRIES:-6}"
 REGISTRY_DELAY="${REGISTRY_DELAY:-5}"
 
-# registry_inspect REF [ARGS...]: docker buildx imagetools inspect REF ARGS,
+# registry_inspect REF [ARGS]: docker buildx imagetools inspect REF ARGS,
 # its output on stdout. Status 0 on success, 2 when the registry says the
 # tag or repository does not exist (not retried), 1 when every attempt
 # failed for another reason (429, 5xx, network, auth; the error output is
