@@ -1,7 +1,13 @@
 # Samba Conductor container images
 
 Container images of Samba Conductor, built from the released and signed
-packages, with compose files for a lab or evaluation stack.
+packages, with compose files for a lab or evaluation stack. The images are
+published on Docker Hub (`docker.io/openbasalt/<image>`) and on the GitHub
+Container Registry (`ghcr.io/openbasalt/<image>`), with the same digests in
+both. The guide to running them (networking, persistence, time,
+permissions, secrets, backups, upgrades, Podman and SELinux, verification)
+is [containers.md](https://github.com/openbasalt/samba-conductor-docs/blob/main/containers.md)
+in the documentation repository.
 
 | Image | Contents | Runs as | Support |
 |---|---|---|---|
@@ -61,15 +67,20 @@ rights and nothing else), `sc-dc-init dns-name NAME...`,
 
 ```sh
 cd compose
-cp .env.example .env          # domain, NetBIOS name, host name, this host's address
+cp .env.example .env          # domain, NetBIOS name, host name, this host's address, image tag
 ./make-secrets.sh             # random passwords in ./secrets (0600)
 docker compose up -d dc       # provisions the domain (about a minute)
 docker compose run --rm conductor-setup
 docker compose up -d
 ```
 
-`conductor-setup` prints a one-time enrollment link for the first
-administrator. Add-ons are listed in `COMPOSE_FILE` in `.env`
+The images come from `SC_IMAGE_PREFIX` (`docker.io/openbasalt/` in
+`.env.example`; `ghcr.io/openbasalt/` works the same) with the tag
+`SC_TAG`, which defaults to this checkout's release (`IMAGE_VERSION` in
+`versions.env`) and never to `latest`; set `SC_TAG=testing` to try a
+release under test, or an empty `SC_IMAGE_PREFIX` and the `--tag` of
+`build-local.sh` for local builds. `conductor-setup` prints a one-time
+enrollment link for the first administrator. Add-ons are listed in `COMPOSE_FILE` in `.env`
 (`addons/idp.yaml`, `sync.yaml`, `backup.yaml`, `host-network.yaml`,
 `provided-tls.yaml`, `join.yaml`, `restore.yaml`); each file starts with the
 steps it needs.
@@ -88,9 +99,11 @@ steps it needs.
 
 Images are released by the release workflow on a version tag, built from
 the component packages pinned in `versions.env`, scanned, signed with
-cosign (keyless) and published with SBOMs and provenance attestations;
-first under the immutable tag and `testing` only. How it works, the
-settings it needs and how to verify an image: [RELEASING.md](RELEASING.md).
+cosign (keyless) and published to Docker Hub and GHCR with SBOMs and
+provenance attestations, first under the immutable tag and `testing` only.
+Once that release has been tested, the promote workflow gives the same
+digests the version tags (`X.Y.Z`, `X.Y`, `X`) and `latest`. How it works,
+the settings it needs and how to verify an image: [RELEASING.md](RELEASING.md).
 
 ## License
 

@@ -15,7 +15,7 @@ services:
       - sync-run:/run/conductor-sync
 
   sync:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-latest}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-0.1.0}
     user: "2094:2094"
     group_add: ["2093"]
     restart: unless-stopped
@@ -46,7 +46,7 @@ services:
       options: {max-size: 10m, max-file: "3"}
 
   sync-setup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-latest}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-0.1.0}
     profiles: [setup]
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "sync"]

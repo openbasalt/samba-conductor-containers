@@ -5,7 +5,8 @@
 #       Decides whether this run may publish and checks the inputs.
 #       Publishing needs a push of a tag vX.Y.Z or vX.Y.Z-rc.N whose
 #       version equals IMAGE_VERSION in versions.env, and released
-#       component packages (no "+git" snapshot versions). Anything else
+#       component packages (no "+git" snapshot versions) and compose files
+#       that default to IMAGE_VERSION. Anything else
 #       (workflow_dispatch, a branch) is a dry run: build, test and scan,
 #       never push. Writes publish=, image_version= and dry_run_reasons=
 #       to $GITHUB_OUTPUT when set, and a summary to stdout.
@@ -20,8 +21,9 @@
 #       revision ("~rc.1" becomes "-rc.1"), <samba> the upstream Samba
 #       version in the DC image and N is IMAGE_REVISION.
 #
-# The only moving tag this workflow sets is "testing" (preview channel);
-# promotion to version and "latest" tags is a separate, later decision.
+# The only moving tag the release workflow sets is "testing" (the channel
+# of a release under test); the version tags and "latest" are set by the
+# promote workflow (scripts/release-promote.sh) once the release is tested.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # shellcheck disable=SC1091
@@ -49,6 +51,7 @@ plan)
       [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(~rc\.[0-9]+)?-[0-9]+$ ]] ||
         { echo "release-meta: $var=$v is not a released package version (X.Y.Z-N or X.Y.Z~rc.N-N)" >&2; exit 1; }
     done
+    scripts/check-compose-tag.sh >&2 || { echo "release-meta: the compose files must default to $IMAGE_VERSION" >&2; exit 1; }
     publish=true
   else
     publish=false

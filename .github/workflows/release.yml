@@ -7,11 +7,13 @@
 # scanning. Tag runs then stage the images in GHCR (multi-arch index,
 # cosign keyless signature, SBOM attestations, GitHub build provenance and
 # SBOM attestations) and, in the protected container-publish environment,
-# copy them to Docker Hub under the immutable tag and "testing" only (never
-# "latest" or version tags), signed and verified there; IMAGES.txt with
-# every digest, under SHA256SUMS signed with the packages subkey (release
-# environment) and a Sigstore bundle; a draft GitHub release only when the
-# repository variable PUBLISH_RELEASE is "true".
+# copy them to Docker Hub under the immutable tag and "testing" (and set
+# "testing" in GHCR), signed and verified there; never "latest" or version
+# tags, which the promote workflow sets after the testing images have been
+# validated. IMAGES.txt with every digest in both registries, under
+# SHA256SUMS signed with the packages subkey (release environment) and a
+# Sigstore bundle; a draft GitHub release only when the repository variable
+# PUBLISH_RELEASE is "true".
 #
 # workflow_dispatch is a dry run: build, smoke test, scan and SBOMs on both
 # architectures; nothing is pushed, signed or released. Tools are pinned
@@ -195,7 +197,8 @@ jobs:
     environment: container-publish
     permissions:
       contents: read
-      packages: read
+      # "testing" in GHCR.
+      packages: write
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -208,7 +211,7 @@ jobs:
         run: |
           scripts/release-tools.sh "$RUNNER_TEMP/tools"
           echo "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
-      - name: copy to Docker Hub (immutable tag and testing), sign, verify
+      - name: copy to Docker Hub (immutable tag and testing), testing in GHCR, sign, verify
         env:
           GH_TOKEN: ${{ github.token }}
           DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}

@@ -19,7 +19,7 @@ services:
       - idp-run:/run/conductor-idp
 
   idp:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-idp:${SC_TAG:-latest}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-idp:${SC_TAG:-0.1.0}
     user: "2095:2095"
     # The conductor group: the management API socket goes to it (0660).
     group_add: ["2093"]
@@ -58,7 +58,7 @@ services:
   # One-shot: idp.toml, the master key and the service account password
   # handed over, conductor's [idp] and [webauthn] sections.
   idp-setup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-idp:${SC_TAG:-latest}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-idp:${SC_TAG:-0.1.0}
     profiles: [setup]
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "idp"]

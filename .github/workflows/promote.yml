@@ -1,0 +1,92 @@
+# Promotion of a released and validated containers version to the version
+# tags (X.Y.Z, X.Y, X), "latest" and, for the DC image, its Samba line
+# ("samba4.22"), on Docker Hub and GHCR. Run it by hand ("Run workflow")
+# from the release tag vX.Y.Z, after the images published under their
+# immutable tags and "testing" by the release workflow have been tested.
+#
+# It copies nothing new: the digests come from IMAGES.txt of that release's
+# run (or of its published GitHub release), every tag is checked to name the
+# released digest, the release signature is verified, and the promotion
+# signs the digests again with its own keyless identity. Immutable tags are
+# never written; a version tag is never moved; "latest" never goes back to
+# an older version (scripts/release-promote.sh).
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to promote (X.Y.Z; run the workflow from the tag vX.Y.Z)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Protected environment (v* tags only, required reviewer): the Docker
+    # Hub token is used only here and in the release workflow.
+    environment: container-publish
+    permissions:
+      contents: read
+      # IMAGES.txt from the release run's artifact.
+      actions: read
+      # Version tags and "latest" in GHCR.
+      packages: write
+      # Keyless signature of the promotion.
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: the version and the ref agree
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must be X.Y.Z (release candidates stay on testing)"; exit 1; }
+          [ "$GITHUB_REF" = "refs/tags/v$VERSION" ] || { echo "::error::run this workflow from the tag v$VERSION (it runs from $GITHUB_REF)"; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: pinned release tools (checksums verified)
+        run: |
+          scripts/release-tools.sh "$RUNNER_TEMP/tools"
+          echo "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
+      - name: IMAGES.txt of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p in
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --branch "v$VERSION" \
+            --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          if [ -n "$run_id" ] && gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name published --dir in 2>/dev/null; then
+            echo "IMAGES.txt from release run $run_id"
+          elif gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" --pattern IMAGES.txt --dir in 2>/dev/null; then
+            echo "IMAGES.txt from the GitHub release v$VERSION"
+          else
+            echo "::error::no successful release run or GitHub release of v$VERSION with IMAGES.txt"
+            exit 1
+          fi
+          cat in/IMAGES.txt
+      - name: version tags and latest on Docker Hub and GHCR, signed, verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ] || { echo "::error::DOCKERHUB_USERNAME or DOCKERHUB_TOKEN is not set"; exit 1; }
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
+          scripts/release-promote.sh "$VERSION" in/IMAGES.txt result
+          { echo "### Promoted v$VERSION"; echo; echo '```'; cat result/PROMOTED.txt; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          docker logout docker.io
+          docker logout ghcr.io
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: promoted
+          path: result/
+          retention-days: 90
