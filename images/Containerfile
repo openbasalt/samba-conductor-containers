@@ -16,7 +16,7 @@
 
 ARG DEBIAN_IMAGE=debian:13-slim
 ARG DISTROLESS_IMAGE=gcr.io/distroless/static-debian13:nonroot
-ARG GO_IMAGE=golang:1.27.0-trixie
+ARG GO_IMAGE=golang:1.27.2-trixie
 
 # ---- sc-dc-init and sc-setup (this repository's own code) ----
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS gobuild
