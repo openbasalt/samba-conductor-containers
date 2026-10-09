@@ -21,7 +21,12 @@
 #    must name the released digest (a copy never rebuilds an image);
 # 4. the digest is signed again with cosign (keyless, the promote
 #    workflow's identity, annotated with the release and the channel) and
-#    that signature is verified.
+#    that signature is verified (retried: the registry lists a new
+#    signature a few seconds late).
+#
+# Registry lookups retry transient failures (429, 5xx, network); a lookup
+# that still fails stops the run with that error, never as a mismatch or
+# as an absent tag (scripts/registry-lib.sh). Reruns are idempotent.
 #
 # Immutable tags are only read, never written. Writes RESULT/PROMOTED.txt
 # ("<registry>/<image>:<tag>@<digest>"). NO_SIGN=1 skips cosign: only for
@@ -32,15 +37,10 @@ REPO="${GITHUB_REPOSITORY:-openbasalt/samba-conductor-containers}"
 ISSUER=https://token.actions.githubusercontent.com
 
 die() { echo "release-promote: $*" >&2; exit 1; }
-digest_of() { docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r .digest; }
-exists() { docker buildx imagetools inspect "$1" >/dev/null 2>&1; }
-# version_label REF: the org.opencontainers.image.version label of an
-# image or of the first platform of an index.
-version_label() {
-  docker buildx imagetools inspect "$1" --format '{{json .Image}}' |
-    jq -r 'if has("config") then .config.Labels else ([.[]][0].config.Labels) end
-      | .["org.opencontainers.image.version"] // empty'
-}
+# digest_of, exists, version_label (registry lookups, transient failures
+# retried, a failed lookup stops the run) and retry.
+# shellcheck source=scripts/registry-lib.sh
+. "$(dirname "$0")/registry-lib.sh"
 cosign() {
   if [ "${NO_SIGN:-}" = 1 ]; then echo "release-promote: NO_SIGN, skipped: cosign $*" >&2; else command cosign "$@"; fi
 }
@@ -81,9 +81,11 @@ for line in "${lines[@]}"; do
   for reg in $REGISTRIES; do
     dst="$reg/$img"
     # 1. The released digest, unchanged, of this release, signed by it.
-    [ "$(digest_of "$dst:$tag")" = "$d" ] || die "$dst:$tag does not name the released digest $d"
-    [ "$(version_label "$dst@$d")" = "$version" ] || die "$dst@$d is not image version $version"
-    cosign verify "$dst@$d" --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$release_id" >/dev/null
+    got="$(digest_of "$dst:$tag")"
+    [ "$got" = "$d" ] || die "$dst:$tag names $got, not the released digest $d"
+    got="$(version_label "$dst@$d")"
+    [ "$got" = "$version" ] || die "$dst@$d is not image version $version (label: ${got:-none})"
+    retry 6 5 cosign verify "$dst@$d" --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$release_id" >/dev/null
     # 2. Refusals.
     if exists "$dst:$version"; then
       cur="$(digest_of "$dst:$version")"
@@ -101,12 +103,14 @@ for line in "${lines[@]}"; do
     for t in "${moving[@]}"; do targs+=(--tag "$dst:$t"); done
     docker buildx imagetools create "${targs[@]}" "$dst@$d"
     for t in "${moving[@]}"; do
-      [ "$(digest_of "$dst:$t")" = "$d" ] || die "$dst:$t: the digest changed in the copy"
+      got="$(digest_of "$dst:$t")"
+      [ "$got" = "$d" ] || die "$dst:$t: the digest changed in the copy"
       echo "$dst:$t@$d" >>"$res/PROMOTED.txt"
     done
     # 4. The promotion's own signature.
+    # The registry lists a new signature with a delay: the verify is retried.
     cosign sign --yes -a "release=v$version" -a channel=latest "$dst@$d"
-    cosign verify "$dst@$d" --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$promote_id" >/dev/null
+    retry 6 5 cosign verify "$dst@$d" --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$promote_id" >/dev/null
     echo "release-promote: $dst@$d tagged ${moving[*]}"
   done
 done
