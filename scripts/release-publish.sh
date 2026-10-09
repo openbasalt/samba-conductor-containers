@@ -28,6 +28,10 @@
 # docker.io/openbasalt). Never touches "latest" or version tags: those are
 # set by scripts/release-promote.sh (promote workflow) after the testing
 # images have been validated.
+# Registry lookups retry transient failures (429, 5xx, network) and a
+# lookup that still fails stops the run (scripts/registry-lib.sh); cosign
+# verify after sign or attest is retried, as the registry lists a new
+# signature a few seconds late.
 # NO_SIGN=1 skips cosign: only for a local test of the copy steps against a
 # throwaway registry (keyless signing needs the workflow's OIDC token).
 set -euo pipefail
@@ -39,8 +43,10 @@ IDENTITY_RE="^https://github.com/${GITHUB_REPOSITORY:-openbasalt/samba-conductor
 ISSUER=https://token.actions.githubusercontent.com
 
 die() { echo "release-publish: $*" >&2; exit 1; }
-digest_of() { docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r .digest; }
-exists() { docker buildx imagetools inspect "$1" >/dev/null 2>&1; }
+# digest_of and exists (registry lookups, transient failures retried, a
+# failed lookup stops the run) and retry.
+# shellcheck source=scripts/registry-lib.sh
+. "$(dirname "$0")/registry-lib.sh"
 cosign() {
   if [ "${NO_SIGN:-}" = 1 ]; then echo "release-publish: NO_SIGN, skipped: cosign $*" >&2; else command cosign "$@"; fi
 }
@@ -89,18 +95,22 @@ promote)
     dst="$PUBLIC/$img"
     exists "$dst:$tag" && die "$dst:$tag already exists: immutable tags are never overwritten"
     docker buildx imagetools create --tag "$dst:$tag" --tag "$dst:testing" "$STAGING/$img@$di"
-    [ "$(digest_of "$dst:$tag")" = "$di" ] || die "$dst:$tag: the digest changed in the copy"
+    got="$(digest_of "$dst:$tag")"
+    [ "$got" = "$di" ] || die "$dst:$tag: the digest changed in the copy"
     cosign sign --yes "$dst@$di"
     cosign attest --yes --type cyclonedx --predicate "$sboms/$img-amd64.cdx.json" "$dst@$da"
     cosign attest --yes --type cyclonedx --predicate "$sboms/$img-arm64.cdx.json" "$dst@$dr"
-    cosign verify "$dst@$di" --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$IDENTITY_RE" >/dev/null
+    # The registry lists new signatures with a delay: verifies are retried.
+    retry 6 5 cosign verify "$dst@$di" --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$IDENTITY_RE" >/dev/null
     # GHCR already holds the signed, attested index under the immutable
     # tag (index step); only the moving "testing" tag is added.
     stg="$STAGING/$img"
-    [ "$(digest_of "$stg:$tag")" = "$di" ] || die "$stg:$tag: not the staged digest"
+    got="$(digest_of "$stg:$tag")"
+    [ "$got" = "$di" ] || die "$stg:$tag: not the staged digest"
     docker buildx imagetools create --tag "$stg:testing" "$stg@$di"
-    [ "$(digest_of "$stg:testing")" = "$di" ] || die "$stg:testing: the digest changed in the copy"
-    cosign verify "$stg@$di" --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$IDENTITY_RE" >/dev/null
+    got="$(digest_of "$stg:testing")"
+    [ "$got" = "$di" ] || die "$stg:testing: the digest changed in the copy"
+    retry 6 5 cosign verify "$stg@$di" --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$IDENTITY_RE" >/dev/null
     echo "$dst:$tag@$di" >>"$res/IMAGES.txt"
     echo "$stg:$tag@$di" >>"$res/IMAGES.txt"
     echo "release-publish: published $dst:$tag@$di and $stg:$tag@$di (and :testing in both)"
