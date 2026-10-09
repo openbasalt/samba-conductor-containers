@@ -16,7 +16,7 @@ GOVULNCHECK := $(TOOLS_DIR)/govulncheck-$(GOVULNCHECK_VERSION)
 VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test check fmt vet staticcheck vulncheck tools images compose-tag
+.PHONY: build test check fmt vet staticcheck vulncheck tools images compose-tag frontend-pin
 
 build:
 	mkdir -p bin
@@ -26,11 +26,15 @@ build:
 test:
 	go test -race ./...
 
-check: fmt vet staticcheck vulncheck test compose-tag
+check: fmt vet staticcheck vulncheck test compose-tag frontend-pin
 
 # The compose files default to IMAGE_VERSION (versions.env).
 compose-tag:
 	scripts/check-compose-tag.sh
+
+# The Containerfile's BuildKit frontend is pinned by digest (versions.env).
+frontend-pin:
+	scripts/check-frontend-pin.sh
 
 fmt:
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
