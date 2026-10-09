@@ -28,8 +28,12 @@ reviewed pull request put there:
   on a tag; a dry run lists them as warnings. The images need component
   releases that include the `healthcheck` subcommands and
   `conductor-backup run --loop`.
-- `IMAGE_REVISION`: the `-rN` of the image tags. Raise it to rebuild the
-  same component versions (Debian security updates, a new base image).
+- `IMAGE_REVISION`: the `-rN` of the image tags, one value for the five
+  images. Raise it to rebuild the same component versions (Debian
+  security updates, a new base image), and for a release that keeps a
+  component at the version of an earlier release: that component's
+  immutable tag at the current revision exists already, and the release
+  refuses to overwrite it.
 - `DEBIAN_SNAPSHOT`, `DEBIAN_IMAGE`, `DISTROLESS_IMAGE`, `GO_IMAGE`: the
   Debian packages and base images, by snapshot timestamp and digest.
 
