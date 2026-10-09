@@ -1,6 +1,11 @@
 /bin/
 /dist/
+/.tools/
 temp/
+# Operator files of the compose stack: secrets and the local .env.
+compose/secrets/
+compose/.env
 compose/*/secrets/
 compose/*/.env
+!compose/.env.example
 !compose/*/.env.example
