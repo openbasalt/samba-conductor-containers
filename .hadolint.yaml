@@ -1,0 +1,12 @@
+# hadolint settings for images/Containerfile (run by the release workflow).
+failure-threshold: warning
+ignored:
+  # Package versions are pinned by the snapshot.debian.org timestamp in
+  # versions.env, not per package (the fetch stage's curl/gpgv only verify
+  # inputs and never reach an image).
+  - DL3008
+  # "debs" is a named build context (--build-context debs=...), not a stage.
+  - DL3022
+  # Separate RUN steps keep the apt sources, the dpkg excludes and the
+  # users readable; the layers are small.
+  - DL3059

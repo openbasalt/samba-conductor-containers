@@ -1,0 +1,309 @@
+# Release of the container images on a tag vX.Y.Z (or vX.Y.Z-rc.N) whose
+# version is IMAGE_VERSION in versions.env, with released component
+# packages pinned there. Per architecture on native runners: the five
+# images built from the verified packages, the smoke test, the scan gate
+# (trivy and grype: no fixable High/Critical, no secret; exceptions only
+# through OpenVEX in vex/), CycloneDX SBOMs (syft), trivy reports in code
+# scanning. Tag runs then stage the images in GHCR (multi-arch index,
+# cosign keyless signature, SBOM attestations, GitHub build provenance and
+# SBOM attestations) and, in the protected container-publish environment,
+# copy them to Docker Hub under the immutable tag and "testing" only (never
+# "latest" or version tags), signed and verified there; IMAGES.txt with
+# every digest, under SHA256SUMS signed with the packages subkey (release
+# environment) and a Sigstore bundle; a draft GitHub release only when the
+# repository variable PUBLISH_RELEASE is "true".
+#
+# workflow_dispatch is a dry run: build, smoke test, scan and SBOMs on both
+# architectures; nothing is pushed, signed or released. Tools are pinned
+# with checksums (scripts/release-tools.sh), actions by commit SHA.
+name: release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      image_version: ${{ steps.plan.outputs.image_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: plan
+        name: publish or dry run, inputs checked
+        run: |
+          set -o pipefail
+          scripts/release-meta.sh plan | tee -a "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      # Staging pushes to GHCR (tag runs only) and trivy reports in code
+      # scanning.
+      packages: write
+      security-events: write
+    env:
+      ARCH: ${{ matrix.arch }}
+      IMAGE_VERSION: ${{ needs.plan.outputs.image_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: pinned release tools (checksums verified)
+        run: |
+          scripts/release-tools.sh "$RUNNER_TEMP/tools"
+          echo "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
+      - name: hadolint
+        if: matrix.arch == 'amd64'
+        run: hadolint images/Containerfile
+      - name: build the five images (packages from the APT repository, verified)
+        run: ./build-local.sh --tag rel --image-version "$IMAGE_VERSION"
+      - name: smoke test (single DC, bridge networking, security assertions)
+        run: scripts/ci-smoke.sh rel
+      - name: immutable tags
+        run: |
+          mkdir -p out
+          scripts/release-meta.sh tags rel >out/tags.txt
+          { echo "### Immutable tags ($ARCH)"; echo; echo '```'; cat out/tags.txt; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+      - name: scan gate and SBOMs
+        run: scripts/release-scan.sh rel "$ARCH" out
+      - name: trivy reports to code scanning
+        if: ${{ !cancelled() && hashFiles('out/scan/*.sarif') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-sarif.sh out
+      - name: stage per-arch images in GHCR (tag runs only)
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          scripts/release-publish.sh push-arch rel "$ARCH" out
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: release-${{ matrix.arch }}
+          path: out/
+          retention-days: 30
+
+  stage:
+    if: needs.plan.outputs.publish == 'true'
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      staged: ${{ steps.index.outputs.staged }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: in
+      - name: pinned release tools (checksums verified)
+        run: |
+          scripts/release-tools.sh "$RUNNER_TEMP/tools"
+          echo "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
+      - id: index
+        name: multi-arch indexes in GHCR, signed, SBOMs attested
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          scripts/release-publish.sh index in/release-amd64 in/release-arm64 staged
+          echo "staged=$(cat staged/staged.json)" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: staged
+          path: staged/
+          retention-days: 30
+
+  attest:
+    needs: stage
+    strategy:
+      matrix:
+        image: ${{ fromJSON(needs.stage.outputs.staged) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: in
+      # The attestations are also pushed next to the image in GHCR.
+      - name: GHCR login
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ matrix.image.name }}
+          subject-digest: ${{ matrix.image.index }}
+          push-to-registry: true
+      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ matrix.image.name }}
+          subject-digest: ${{ matrix.image.amd64 }}
+          sbom-path: in/release-amd64/sbom/${{ matrix.image.image }}-amd64.cdx.json
+          push-to-registry: true
+      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ matrix.image.name }}
+          subject-digest: ${{ matrix.image.arm64 }}
+          sbom-path: in/release-arm64/sbom/${{ matrix.image.image }}-arm64.cdx.json
+          push-to-registry: true
+
+  promote:
+    needs: [stage, attest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Protected environment (v* tags only, required reviewer): the Docker
+    # Hub token is used only here.
+    environment: container-publish
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: in
+      - name: pinned release tools (checksums verified)
+        run: |
+          scripts/release-tools.sh "$RUNNER_TEMP/tools"
+          echo "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
+      - name: copy to Docker Hub (immutable tag and testing), sign, verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ] || { echo "::error::DOCKERHUB_USERNAME or DOCKERHUB_TOKEN is not set"; exit 1; }
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          printf '%s' "$DOCKERHUB_TOKEN" | docker login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
+          mkdir -p sboms result
+          cp in/release-amd64/sbom/*.cdx.json in/release-arm64/sbom/*.cdx.json sboms/
+          cp in/staged/staged.txt result/
+          scripts/release-publish.sh promote result sboms
+          { echo "### Published"; echo; echo '```'; cat result/IMAGES.txt; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          docker logout docker.io
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: published
+          path: result/
+          retention-days: 30
+
+  assets:
+    needs: promote
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Protected environment (tags only, required reviewer): holds the
+    # release signing subkey. Without the secret the job only records that
+    # SHA256SUMS is unsigned.
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: in
+      - name: release assets and SHA256SUMS
+        run: |
+          mkdir -p release
+          cp in/published/IMAGES.txt release/
+          for a in amd64 arm64; do
+            cp in/release-$a/sbom/*.cdx.json release/
+            for f in in/release-$a/scan/*.json; do cp "$f" "release/$(basename "$f")"; done
+          done
+          cd release && sha256sum -- * >SHA256SUMS
+      - name: OpenPGP signature of SHA256SUMS
+        working-directory: release
+        env:
+          SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          SIGNING_PASSPHRASE: ${{ secrets.RELEASE_SIGNING_PASSPHRASE }}
+          SIGNING_FPR: ${{ vars.RELEASE_SIGNING_FPR }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::warning::RELEASE_SIGNING_KEY is not set: SHA256SUMS is not signed"
+            exit 0
+          fi
+          export GNUPGHOME="$(mktemp -d)"
+          printf '%s' "$SIGNING_KEY" | gpg --batch --import
+          printf '%s' "$SIGNING_PASSPHRASE" | gpg --batch --pinentry-mode loopback --passphrase-fd 0 \
+            --local-user "$SIGNING_FPR" --armor --detach-sign --output SHA256SUMS.asc SHA256SUMS
+          gpgv --keyring "$GITHUB_WORKSPACE/keys/openbasalt-release-key.gpg" SHA256SUMS.asc SHA256SUMS
+          rm -rf "$GNUPGHOME"
+      - name: pinned release tools (checksums verified)
+        run: |
+          scripts/release-tools.sh "$RUNNER_TEMP/tools"
+          echo "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
+      - name: Sigstore bundle of SHA256SUMS (keyless)
+        working-directory: release
+        run: cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: release/
+          retention-days: 30
+
+  draft-release:
+    if: ${{ vars.PUBLISH_RELEASE == 'true' }}
+    needs: assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: release
+      - name: Draft GitHub release (published by a person)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "samba-conductor-containers $TAG" \
+            --notes "Container images (testing channel), SBOMs, scan reports and signed checksums of $TAG. Image references with digests: IMAGES.txt." \
+            release/*
