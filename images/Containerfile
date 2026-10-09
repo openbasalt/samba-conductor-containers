@@ -97,6 +97,8 @@ ARG TARGETARCH
 # samba-ad-provision holds the schema files provision and join need; chrony
 # serves signed time; ldb-tools for the healthcheck; acl/attr for sysvol.
 RUN apt-get update -qq && \
+    # The base image's own packages get the snapshot's security updates too.
+    apt-get upgrade -y -qq >/dev/null && \
     apt-get install -y -qq --no-install-recommends samba-ad-dc samba-ad-provision chrony ldb-tools acl attr ca-certificates >/dev/null && \
     # Nothing installs packages at run time: no apt in the image.
     dpkg --purge --force-remove-protected apt libapt-pkg7.0 >/dev/null && \
@@ -139,6 +141,7 @@ ARG IMAGE_VERSION=0.0.0-dev
 # "ildap" backend samba-tool needs for ldap:// URLs (without it ldb falls
 # back to a backend that cannot bind with Kerberos).
 RUN apt-get update -qq && \
+    apt-get upgrade -y -qq >/dev/null && \
     apt-get install -y -qq --no-install-recommends python3-samba samba-dsdb-modules ca-certificates >/dev/null && \
     dpkg --purge --force-remove-protected apt libapt-pkg7.0 >/dev/null && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/*.bin /var/log/apt /var/log/dpkg.log /var/cache/ldconfig/aux-cache && \
