@@ -28,6 +28,9 @@ keys reach the containers only as files, never in environment variables.
 | `cmd/sc-setup` | the one-shot configuration of the service containers |
 | `compose/` | `compose.yaml` (a single DC with conductor) and add-ons (`addons/`) |
 | `build-local.sh` | local builds (nothing is pushed) |
+| `scripts/ci-smoke.sh` | the smoke test of CI and releases |
+| `scripts/release-*.sh` | the release steps: pinned tools, scans and SBOMs, tags, publishing |
+| `vex/` | scan exceptions (OpenVEX) |
 
 ## The DC entry point
 
@@ -78,6 +81,16 @@ steps it needs.
 ./build-local.sh --source local --debs DIR   # packages you built (make package), with their SHA256SUMS
 ./build-local.sh --platform linux/arm64 --output none
 ```
+
+`make check` runs the Go gates of `sc-dc-init` and `sc-setup`.
+
+## Releases
+
+Images are released by the release workflow on a version tag, built from
+the component packages pinned in `versions.env`, scanned, signed with
+cosign (keyless) and published with SBOMs and provenance attestations;
+first under the immutable tag and `testing` only. How it works, the
+settings it needs and how to verify an image: [RELEASING.md](RELEASING.md).
 
 ## License
 
