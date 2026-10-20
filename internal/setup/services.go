@@ -47,10 +47,13 @@ func (s *Setup) Conductor(ctx context.Context) error {
 	if err := s.install("/var/lib/conductor", 0o700, UIDConductor, UIDConductor); err != nil {
 		return err
 	}
-	if _, err := os.Stat(s.p(etc + "/conductor.toml")); errors.Is(err, os.ErrNotExist) {
+	cfg := etc + "/conductor.toml"
+	if _, err := os.Stat(s.p(cfg)); errors.Is(err, os.ErrNotExist) {
 		pw, err := s.readSecret("admin-password")
 		if err != nil {
-			return fmt.Errorf("conductor setup resolves the role groups with the Administrator account: %w", err)
+			return fmt.Errorf("%w: conductor setup resolves the role groups with the domain Administrator account, so the "+
+				"Administrator's password must be in ./secrets/admin-password and admin-password must be among the stack's secrets "+
+				"(make-secrets.sh creates it before the first start)", err)
 		}
 		args := []string{"setup", "--non-interactive", "--realm", realm, "--dc", dcHost, "--ca-file", s.p(etc + "/domain-ca-input.pem"),
 			"--admin-user", s.Env.Get("SC_ADMIN_USER", "Administrator"), "--first-admin", s.Env.Get("SC_FIRST_ADMIN", "Administrator"),
@@ -63,8 +66,13 @@ func (s *Setup) Conductor(ctx context.Context) error {
 				args = append(args, g[0], v)
 			}
 		}
-		if err := s.runCmd(ctx, append(pw, '\n'), "/usr/bin/conductor", args...); err != nil {
-			return err
+		if err := s.runCmd(ctx, append(pw, '\n'), s.bin("conductor"), args...); err != nil {
+			return fmt.Errorf("%w: conductor setup failed (its output is above) and %s was not written; check that the dc "+
+				"service is healthy (docker compose ps dc) and that ./secrets/admin-password holds the domain Administrator's "+
+				"password, then run conductor-setup again", err, cfg)
+		}
+		if _, err := os.Stat(s.p(cfg)); err != nil {
+			return fmt.Errorf("conductor setup ended without writing %s: %w", cfg, err)
 		}
 	} else {
 		s.logf("conductor.toml exists: kept (delete it from the conductor-etc volume to run conductor setup again)")
@@ -72,7 +80,8 @@ func (s *Setup) Conductor(ctx context.Context) error {
 	_ = os.Remove(s.p(etc + "/domain-ca-input.pem"))
 	totp, err := os.ReadFile(s.p(etc + "/credentials/totp-key"))
 	if err != nil {
-		return fmt.Errorf("the TOTP key conductor setup writes: %w", err)
+		return fmt.Errorf("the TOTP key conductor setup writes: %w (%s exists without it: delete conductor.toml from the "+
+			"conductor-etc volume and run conductor-setup again)", err, cfg)
 	}
 	if err := s.handOver("/run/credentials/conductor", UIDConductor, map[string][]byte{"totp-key": totp}); err != nil {
 		return err
@@ -133,7 +142,7 @@ func (s *Setup) IDP(ctx context.Context) error {
 	}
 	mk := etc + "/credentials/master-key"
 	if _, err := os.Stat(s.p(mk)); errors.Is(err, os.ErrNotExist) {
-		if err := s.runCmd(ctx, nil, "/usr/bin/conductor-idp", "gen-key", s.p(mk)); err != nil {
+		if err := s.runCmd(ctx, nil, s.bin("conductor-idp"), "gen-key", s.p(mk)); err != nil {
 			return err
 		}
 	}
@@ -352,7 +361,7 @@ func (s *Setup) Backup(ctx context.Context) error {
 	}
 	keyP := etc + "/credentials/signing-key"
 	if _, err := os.Stat(s.p(keyP)); errors.Is(err, os.ErrNotExist) {
-		if err := s.runCmd(ctx, nil, "/usr/bin/conductor-backup", "keygen", "signing", "--out", s.p(keyP)); err != nil {
+		if err := s.runCmd(ctx, nil, s.bin("conductor-backup"), "keygen", "signing", "--out", s.p(keyP)); err != nil {
 			return err
 		}
 	}
@@ -427,7 +436,7 @@ verify_after_upload = true
 	if err := s.handOver("/run/credentials/conductor-backup", UIDBackup, creds); err != nil {
 		return err
 	}
-	if err := s.runCmd(ctx, nil, "/usr/bin/conductor-backup", "pubkey", s.p(keyP)); err != nil {
+	if err := s.runCmd(ctx, nil, s.bin("conductor-backup"), "pubkey", s.p(keyP)); err != nil {
 		return err
 	}
 	s.logf("conductor-backup configured; the public signing key above goes into backup_public_keys of a restore configuration")

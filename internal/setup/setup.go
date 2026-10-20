@@ -63,9 +63,20 @@ type Setup struct {
 	Root string
 	// Chown is false in tests (not root).
 	Chown bool
+	// BinDir holds the service programs; "" means /usr/bin (tests point it
+	// at stand-ins).
+	BinDir string
 }
 
 func (s *Setup) p(path string) string { return filepath.Join(s.Root, path) }
+
+// bin returns the path of a service program.
+func (s *Setup) bin(name string) string {
+	if s.BinDir == "" {
+		return filepath.Join("/usr/bin", name)
+	}
+	return filepath.Join(s.BinDir, name)
+}
 
 func (s *Setup) logf(format string, args ...any) {
 	fmt.Fprintf(s.Out, "[sc-setup] "+format+"\n", args...)

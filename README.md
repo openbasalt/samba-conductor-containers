@@ -79,11 +79,18 @@ The images come from `SC_IMAGE_PREFIX` (`docker.io/openbasalt/` in
 `SC_TAG`, which defaults to this checkout's release (`IMAGE_VERSION` in
 `versions.env`) and never to `latest`; set `SC_TAG=testing` to try a
 release under test, or an empty `SC_IMAGE_PREFIX` and the `--tag` of
-`build-local.sh` for local builds. `conductor-setup` prints a one-time
-enrollment link for the first administrator. Add-ons are listed in `COMPOSE_FILE` in `.env`
-(`addons/idp.yaml`, `sync.yaml`, `backup.yaml`, `host-network.yaml`,
-`provided-tls.yaml`, `join.yaml`, `restore.yaml`); each file starts with the
-steps it needs.
+`build-local.sh` for local builds. `conductor-setup` waits for the DC to
+be healthy and prints a one-time enrollment link for the first
+administrator. Until it has run, conductor is created but not started: the
+one-shot `conductor-check` stops `docker compose up -d` with an error, and
+`docker compose logs conductor-check` says what to run. Add-ons are listed
+in `COMPOSE_FILE` in `.env` (`addons/idp.yaml`, `sync.yaml`, `backup.yaml`,
+`host-network.yaml`, `ipvlan.yaml`, `macvlan.yaml`, `provided-tls.yaml`,
+`join.yaml`, `restore.yaml`); each file starts with the steps it needs.
+`ipvlan.yaml` and `macvlan.yaml` put the stack's network on a host
+interface (`SC_NET_PARENT`, `SC_NET_MODE`, `SC_NET_SUBNET`,
+`SC_NET_GATEWAY`, `SC_NET_RANGE`), with fixed addresses for the DC and
+conductor on the LAN.
 
 ## Building
 
