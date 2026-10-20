@@ -87,6 +87,10 @@ one-shot `conductor-check` stops `docker compose up -d` with an error, and
 in `COMPOSE_FILE` in `.env` (`addons/idp.yaml`, `sync.yaml`, `backup.yaml`,
 `host-network.yaml`, `ipvlan.yaml`, `macvlan.yaml`, `provided-tls.yaml`,
 `join.yaml`, `restore.yaml`); each file starts with the steps it needs.
+The idp, sync and backup add-ons hold their service back the same way
+until its setup one-shot has run (`idp-check`, `sync-check`,
+`backup-check`, each naming the setup command), and `idp-setup` and
+`sync-setup` wait for a healthy DC.
 `ipvlan.yaml` and `macvlan.yaml` put the stack's network on a host
 interface (`SC_NET_PARENT`, `SC_NET_MODE`, `SC_NET_SUBNET`,
 `SC_NET_GATEWAY`, `SC_NET_RANGE`), with fixed addresses for the DC and

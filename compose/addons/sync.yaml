@@ -4,8 +4,10 @@
 #   COMPOSE_FILE=compose.yaml:addons/sync.yaml
 #   SC_SYNC_EMAIL_DOMAIN and SC_SYNC_GOOGLE_ADMIN in .env
 #   docker compose exec dc sc-dc-init account sync      (needs secrets/sync-ad-password)
-#   docker compose run --rm sync-setup
+#   docker compose run --rm sync-setup               (waits for a healthy DC)
 #   docker compose up -d
+# Started before sync-setup, sync stays down and the one-shot sync-check
+# says so (docker compose logs sync-check).
 services:
   dc:
     secrets: [admin-password, sync-ad-password]
@@ -22,6 +24,8 @@ services:
     depends_on:
       dc:
         condition: service_healthy
+      sync-check:
+        condition: service_completed_successfully
     read_only: true
     cap_drop: [ALL]
     security_opt:
@@ -45,12 +49,53 @@ services:
       driver: json-file
       options: {max-size: 10m, max-file: "3"}
 
+  # One-shot guard of sync: it starts only once sync-setup has written
+  # conductor-sync.toml and handed over the bind password and the state
+  # key. Without them this exits with instructions and compose leaves sync
+  # created but not started (no restart loop).
+  sync-check:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.1}
+    user: "2094:2094"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        for f in /etc/conductor-sync/conductor-sync.toml /run/credentials/conductor-sync/ad-bind /run/credentials/conductor-sync/state-key; do
+        [ -r "$$f" ] && continue;
+        echo "conductor-sync is not configured yet ($$f is missing): run 'docker compose run --rm sync-setup'
+        (the steps are at the top of addons/sync.yaml), then 'docker compose up -d'" >&2;
+        exit 1;
+        done;
+        echo "sync-check: conductor-sync is configured"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    network_mode: none
+    volumes:
+      - sync-etc:/etc/conductor-sync:ro
+      - sync-cred:/run/credentials/conductor-sync:ro
+    healthcheck:
+      disable: true
+    pids_limit: 16
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+  # One-shot: conductor-sync.toml (dry-run), the bind password and the
+  # state key handed over, conductor's [sync] section.
   sync-setup:
     image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-0.1.1}
     profiles: [setup]
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "sync"]
     command: []
+    # docker compose run starts the DC first and waits for it: sync setup
+    # needs the exported CA.
+    depends_on:
+      dc:
+        condition: service_healthy
     environment:
       SC_REALM: ${SC_DNS_DOMAIN}
       SC_DC_HOST: ${SC_HOSTNAME:-dc1}.${SC_DNS_DOMAIN}

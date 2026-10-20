@@ -4,8 +4,10 @@
 #   COMPOSE_FILE=compose.yaml:addons/idp.yaml
 #   docker compose exec dc sc-dc-init account idp       (needs secrets/idp-ad-password)
 #   docker compose exec dc sc-dc-init dns-name conductor idp
-#   docker compose run --rm idp-setup
+#   docker compose run --rm idp-setup                (waits for a healthy DC)
 #   docker compose up -d
+# Started before idp-setup, idp stays down and the one-shot idp-check says
+# so (docker compose logs idp-check).
 services:
   dc:
     secrets: [admin-password, idp-ad-password]
@@ -29,6 +31,8 @@ services:
         condition: service_healthy
       conductor:
         condition: service_started
+      idp-check:
+        condition: service_completed_successfully
     read_only: true
     cap_drop: [ALL]
     security_opt:
@@ -55,6 +59,40 @@ services:
       driver: json-file
       options: {max-size: 10m, max-file: "3"}
 
+  # One-shot guard of idp: it starts only once idp-setup has written
+  # idp.toml and handed over the master key and the service account
+  # password. Without them this exits with instructions and compose leaves
+  # idp created but not started (no restart loop).
+  idp-check:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.1}
+    user: "2095:2095"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        for f in /etc/conductor-idp/idp.toml /run/credentials/conductor-idp/master-key /run/credentials/conductor-idp/ad-password; do
+        [ -r "$$f" ] && continue;
+        echo "conductor-idp is not configured yet ($$f is missing): run 'docker compose run --rm idp-setup'
+        (the steps are at the top of addons/idp.yaml), then 'docker compose up -d'" >&2;
+        exit 1;
+        done;
+        echo "idp-check: conductor-idp is configured"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    network_mode: none
+    volumes:
+      - idp-etc:/etc/conductor-idp:ro
+      - idp-cred:/run/credentials/conductor-idp:ro
+    healthcheck:
+      disable: true
+    pids_limit: 16
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
   # One-shot: idp.toml, the master key and the service account password
   # handed over, conductor's [idp] and [webauthn] sections.
   idp-setup:
@@ -63,6 +101,11 @@ services:
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "idp"]
     command: []
+    # docker compose run starts the DC first and waits for it: idp setup
+    # needs the issued certificate and the exported CA.
+    depends_on:
+      dc:
+        condition: service_healthy
     environment:
       SC_REALM: ${SC_DNS_DOMAIN}
       SC_DC_HOST: ${SC_HOSTNAME:-dc1}.${SC_DNS_DOMAIN}
