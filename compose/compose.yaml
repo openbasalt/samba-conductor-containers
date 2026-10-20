@@ -9,6 +9,8 @@
 #   docker compose up -d dc                      (provisions the domain, ~1 min)
 #   docker compose run --rm conductor-setup      (prints the first administrator's enrollment link)
 #   docker compose up -d
+# Started before conductor-setup, conductor stays down and the one-shot
+# conductor-check says so (docker compose logs conductor-check).
 name: ${SC_PROJECT:-samba-conductor}
 
 x-security: &security
@@ -118,6 +120,8 @@ services:
     depends_on:
       dc:
         condition: service_healthy
+      conductor-check:
+        condition: service_completed_successfully
     read_only: true
     cap_drop: [ALL]
     security_opt: *security
@@ -141,6 +145,36 @@ services:
     pids_limit: 256
     logging: *logging
 
+  # One-shot guard of conductor: it starts only once conductor-setup has
+  # written its configuration and handed over the TOTP key. Without them
+  # this exits with instructions, compose leaves conductor created but not
+  # started, and nothing restarts in a loop.
+  conductor-check:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.1}
+    user: "2093:2093"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        for f in /etc/conductor/conductor.toml /run/credentials/conductor/totp-key; do
+        [ -r "$$f" ] && continue;
+        echo "conductor is not configured yet ($$f is missing): run 'docker compose run --rm conductor-setup'
+        (README, Quick start), then 'docker compose up -d'" >&2;
+        exit 1;
+        done;
+        echo "conductor-check: conductor is configured"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: *security
+    network_mode: none
+    volumes:
+      - conductor-etc:/etc/conductor:ro
+      - conductor-cred:/run/credentials/conductor:ro
+    healthcheck:
+      disable: true
+    pids_limit: 16
+    logging: *logging
+
   # One-shot: conductor setup (as root), the TOTP key handed over.
   #   docker compose run --rm conductor-setup
   conductor-setup:
@@ -149,6 +183,11 @@ services:
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "conductor"]
     command: []
+    # docker compose run starts the DC first and waits for it: conductor
+    # setup needs the domain, the issued certificate and the exported CA.
+    depends_on:
+      dc:
+        condition: service_healthy
     environment:
       <<: *setup-env
       SC_PUBLIC_URL: ${SC_PUBLIC_URL:-https://conductor.${SC_DNS_DOMAIN}:8443}

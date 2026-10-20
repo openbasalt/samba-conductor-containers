@@ -3,7 +3,8 @@
 # domain in the DC image on a bridge network, the healthcheck, idempotency
 # on recreate (same domain SID, no second provisioning) and the security
 # assertions (not privileged, exact capabilities, read-only root, fixed
-# users, no secret in any environment). Uses compose/ with a throwaway .env
+# users, no secret in any environment), and conductor held back with a
+# clear message until conductor-setup has run. Uses compose/ with a throwaway .env
 # and secrets; removes the stack and its volumes at the end.
 #
 #   scripts/ci-smoke.sh TAG [IMAGE_PREFIX]
@@ -82,3 +83,16 @@ if docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$id" | grep -i
   fail "a secret-like variable is in the DC's environment"
 fi
 ok "not privileged, read-only root, exact capabilities (CapEff $capeff), no secrets in the environment"
+
+# conductor before conductor-setup: the conductor-check one-shot explains
+# what to run, conductor is created but never started (no restart loop).
+if docker compose up -d conductor 2>/dev/null; then
+  fail "conductor started without its configuration"
+fi
+docker compose logs conductor-check | grep -q 'conductor is not configured yet' ||
+  fail "conductor-check did not explain the missing configuration"
+cid="$(docker compose ps -aq conductor)"
+[ -n "$cid" ] || fail "no conductor container"
+[ "$(docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$cid")" = "created 0" ] ||
+  fail "conductor is not held back: $(docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$cid")"
+ok "conductor waits for conductor-setup, with instructions"

@@ -1,0 +1,58 @@
+# Add-on: the stack's network on macvlan instead of a bridge. Each container
+# gets its own address and its own MAC address on the LAN behind a host
+# interface (SC_NET_PARENT), the DC at SC_DC_ADDRESS and conductor at
+# SC_CONDUCTOR_ADDRESS; nothing is published on the host. Wi-Fi interfaces
+# and switch ports or hypervisors that allow one MAC address per port do not
+# carry macvlan traffic: use ipvlan.yaml there.
+#   COMPOSE_FILE=compose.yaml:addons/macvlan.yaml
+#   in .env:
+#     SC_NET_PARENT=eth0                 the host interface on the LAN
+#     SC_NET_MODE=bridge                 the macvlan mode (bridge is the usual one)
+#     SC_NET_SUBNET=192.0.2.0/24         the LAN
+#     SC_NET_GATEWAY=192.0.2.1           the LAN's router
+#     SC_NET_RANGE=192.0.2.224/28        the addresses Docker hands out (setup one-shots, add-ons)
+#     SC_DC_ADDRESS=192.0.2.230          in SC_NET_SUBNET, not in use
+#     SC_CONDUCTOR_ADDRESS=192.0.2.231   in SC_NET_SUBNET, not in use
+#     SC_HOST_IP=192.0.2.230             the same as SC_DC_ADDRESS (the DC advertises it)
+#   docker compose up -d dc
+#   docker compose exec dc samba-tool dns add 127.0.0.1 <SC_DNS_DOMAIN> conductor A <SC_CONDUCTOR_ADDRESS> -P
+#   docker compose run --rm conductor-setup
+#   docker compose up -d
+# Caveats:
+# - The host cannot reach the containers and they cannot reach the host
+#   (a kernel rule of macvlan and ipvlan): open conductor from another
+#   machine, and do not use the host itself as SC_DNS_FORWARDERS.
+# - Keep SC_NET_RANGE, SC_DC_ADDRESS and SC_CONDUCTOR_ADDRESS out of the
+#   LAN's DHCP pool: Docker does not ask the LAN which addresses are free.
+# - Published ports do not apply on macvlan: with addons/idp.yaml, give idp
+#   a fixed address the same way (ipv4_address in an override file) and
+#   register idp.<SC_DNS_DOMAIN> with it instead of "sc-dc-init dns-name".
+# - Not with addons/host-network.yaml (the DC is on one network or the other).
+services:
+  dc:
+    environment:
+      # The DC owns its address: Samba registers it in DNS as it is.
+      SC_NETWORK_MODE: macvlan
+      SC_HOST_IP: ${SC_DC_ADDRESS:?set SC_DC_ADDRESS in .env}
+    networks:
+      sc:
+        ipv4_address: ${SC_DC_ADDRESS:?set SC_DC_ADDRESS in .env}
+    ports: !reset []
+
+  conductor:
+    networks:
+      sc:
+        ipv4_address: ${SC_CONDUCTOR_ADDRESS:?set SC_CONDUCTOR_ADDRESS in .env}
+    ports: !reset []
+
+networks:
+  sc:
+    driver: macvlan
+    driver_opts:
+      parent: ${SC_NET_PARENT:?set SC_NET_PARENT in .env}
+      macvlan_mode: ${SC_NET_MODE:-bridge}
+    ipam:
+      config: !override
+        - subnet: ${SC_NET_SUBNET:?set SC_NET_SUBNET in .env}
+          gateway: ${SC_NET_GATEWAY:?set SC_NET_GATEWAY in .env}
+          ip_range: ${SC_NET_RANGE:?set SC_NET_RANGE in .env}
