@@ -1,7 +1,7 @@
 // Command sc-setup is the one-shot configuration of the Samba Conductor
 // service containers (run as root, once, before the services start):
 //
-//	sc-setup conductor | idp | sync | backup
+//	sc-setup conductor | idp | sync | backup | provisioner | mail
 //	sc-setup version
 package main
 
@@ -18,7 +18,7 @@ import (
 
 var version = "dev"
 
-const usage = `usage: sc-setup conductor|idp|sync|backup
+const usage = `usage: sc-setup conductor|idp|sync|backup|provisioner|mail
 
 One-shot configuration of a service container (as root, in the service's own
 image, under the compose "setup" profile). Configuration comes from SC_*
@@ -49,6 +49,10 @@ func main() {
 		err = s.Sync(ctx)
 	case "backup":
 		err = s.Backup(ctx)
+	case "provisioner":
+		err = s.Provisioner(ctx)
+	case "mail":
+		err = s.Mail(ctx)
 	case "version", "--version":
 		fmt.Println("sc-setup", version)
 	default:

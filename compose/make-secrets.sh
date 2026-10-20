@@ -2,7 +2,9 @@
 # Create ./secrets (0700) with random passwords for the stack, never
 # overwriting an existing file. Reads nothing from the environment. Secrets
 # you bring yourself (s3, age-identity, join-password, TLS files) go into
-# the same directory, mode 0600.
+# the same directory, mode 0600. smtp-password and mail-ca (addons/mail.yaml)
+# start empty: write the relay's password and CA into them when it needs
+# them.
 #
 #   ./make-secrets.sh
 set -eu
@@ -15,10 +17,16 @@ gen() {
   p="$(tr -dc 'A-HJ-NP-Za-km-z2-9' </dev/urandom | head -c 21)"
   printf '%s' "Sc-${p}9"
 }
-for name in admin-password idp-ad-password sync-ad-password backup-account; do
+for name in admin-password idp-ad-password sync-ad-password backup-account provisioner-ad-password; do
   if [ ! -s "secrets/$name" ]; then
     gen >"secrets/$name"
     echo "created secrets/$name"
+  fi
+done
+for name in smtp-password mail-ca; do
+  if [ ! -e "secrets/$name" ]; then
+    : >"secrets/$name"
+    echo "created secrets/$name (empty)"
   fi
 done
 chmod 0600 secrets/*

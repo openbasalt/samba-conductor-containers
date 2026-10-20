@@ -1,6 +1,6 @@
 # Release of the container images on a tag vX.Y.Z (or vX.Y.Z-rc.N) whose
 # version is IMAGE_VERSION in versions.env, with released component
-# packages pinned there. Per architecture on native runners: the five
+# packages pinned there. Per architecture on native runners: the six
 # images built from the verified packages, the smoke test, the scan gate
 # (trivy and grype: no fixable High/Critical, no secret; exceptions only
 # through OpenVEX in vex/), CycloneDX SBOMs (syft), trivy reports in code
@@ -81,7 +81,7 @@ jobs:
       - name: hadolint
         if: matrix.arch == 'amd64'
         run: hadolint images/Containerfile
-      - name: build the five images (packages from the APT repository, verified)
+      - name: build the six images (packages from the APT repository, verified)
         run: ./build-local.sh --tag rel --image-version "$IMAGE_VERSION"
       - name: smoke test (single DC, bridge networking, security assertions)
         run: scripts/ci-smoke.sh rel

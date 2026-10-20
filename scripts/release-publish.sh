@@ -3,7 +3,7 @@
 # calls this script). The caller is logged in to the registries.
 #
 #   push-arch LOCAL_TAG ARCH OUT
-#       Push the five images built as <image>:LOCAL_TAG to the staging
+#       Push the six images built as <image>:LOCAL_TAG to the staging
 #       registry as <immutable tag>-<arch> (tags from OUT/tags.txt) and
 #       write "<image> <arch> <digest>" lines to OUT/digests.txt.
 #
@@ -17,7 +17,8 @@
 #
 #   promote RESULT SBOM_DIR
 #       Per image: copy the staged index to the public registry under the
-#       immutable tag and "testing" (refused if the immutable tag exists),
+#       immutable tag and "testing" (refused if the immutable tag names
+#       another digest; a rerun finds the same digest and goes on),
 #       check the digest did not change, sign and attest there too, verify
 #       the signature against this workflow's identity; then set "testing"
 #       on the staged index in GHCR as well (GHCR is the second public
@@ -93,8 +94,16 @@ promote)
   : >"$res/IMAGES.txt"
   while read -r img tag di da dr; do
     dst="$PUBLIC/$img"
-    exists "$dst:$tag" && die "$dst:$tag already exists: immutable tags are never overwritten"
-    docker buildx imagetools create --tag "$dst:$tag" --tag "$dst:testing" "$STAGING/$img@$di"
+    if exists "$dst:$tag"; then
+      # A rerun after a partial failure (an image copied before another
+      # failed): the tag may only name the staged digest already.
+      got="$(digest_of "$dst:$tag")"
+      [ "$got" = "$di" ] || die "$dst:$tag already names $got: immutable tags are never overwritten"
+      echo "release-publish: $dst:$tag already names the staged digest (rerun)"
+      docker buildx imagetools create --tag "$dst:testing" "$dst@$di"
+    else
+      docker buildx imagetools create --tag "$dst:$tag" --tag "$dst:testing" "$STAGING/$img@$di"
+    fi
     got="$(digest_of "$dst:$tag")"
     [ "$got" = "$di" ] || die "$dst:$tag: the digest changed in the copy"
     cosign sign --yes "$dst@$di"

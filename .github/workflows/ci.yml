@@ -1,5 +1,5 @@
 # Continuous integration of the container images: the Go gates of
-# sc-dc-init and sc-setup, the five images built per architecture on native
+# sc-dc-init and sc-setup, the six images built per architecture on native
 # runners from the packages pinned in versions.env (verified against the
 # OpenBasalt release key), and a smoke test of the single-DC stack: a fresh
 # provision, the healthchecks, idempotency on recreate and the security
@@ -47,7 +47,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: build the five images (packages from the APT repository, verified)
+      - name: build the six images (packages from the APT repository, verified)
         run: ./build-local.sh --tag ci
       - name: smoke test (single DC, bridge networking, security assertions)
         run: scripts/ci-smoke.sh ci

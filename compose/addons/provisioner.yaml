@@ -1,0 +1,139 @@
+# Add-on: conductor-provisioner, the only service of the stack that writes
+# to AD on its own: a delegated account limited to the managed OUs, used by
+# conductor for invitations, password resets by e-mail and the Google-first
+# plan. It serves conductor only (SO_PEERCRED, UID 2093) on a socket in the
+# provisioner-run volume and refuses privileged accounts on its own.
+# Invitations and resets by e-mail also need addons/mail.yaml.
+#   COMPOSE_FILE=compose.yaml:addons/provisioner.yaml:addons/mail.yaml
+#   SC_PROVISIONER_OUS in .env: the managed OUs, separated by ";"
+#     (default OU=People,<domain>, created when missing)
+#   docker compose exec dc sc-dc-init account provisioner [--ou DN]... [--google-first]
+#     (needs secrets/provisioner-ad-password; the same OUs as SC_PROVISIONER_OUS)
+#   docker compose run --rm provisioner-setup        (after conductor-setup; waits for a healthy DC)
+#   docker compose up -d
+#   docker compose restart conductor                 (loads the section provisioner-setup enabled)
+# Started before provisioner-setup, provisioner stays down and the one-shot
+# provisioner-check says so (docker compose logs provisioner-check).
+services:
+  dc:
+    secrets: [admin-password, provisioner-ad-password]
+
+  conductor:
+    volumes:
+      - provisioner-run:/run/conductor-provisioner
+
+  provisioner:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-provisioner:${SC_TAG:-0.2.0}
+    user: "2098:2098"
+    # The conductor group: the API socket goes to it (0660), and only
+    # conductor's UID is admitted on it.
+    group_add: ["2093"]
+    restart: unless-stopped
+    depends_on:
+      dc:
+        condition: service_healthy
+      provisioner-check:
+        condition: service_completed_successfully
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    tmpfs:
+      - /tmp:mode=1777,size=16m
+    volumes:
+      - provisioner-etc:/etc/conductor-provisioner:ro
+      - provisioner-state:/var/lib/conductor-provisioner
+      - provisioner-cred:/run/credentials/conductor-provisioner:ro
+      - provisioner-run:/run/conductor-provisioner
+    dns: ["${SC_DC_ADDRESS:-${SC_NET:-172.30.93}.10}"]
+    dns_search: ["${SC_DNS_DOMAIN}"]
+    extra_hosts:
+      - "${SC_HOSTNAME:-dc1}.${SC_DNS_DOMAIN}:${SC_DC_ADDRESS:-${SC_NET:-172.30.93}.10}"
+    networks: [sc]
+    mem_limit: 256m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+  # One-shot guard of provisioner: it starts only once provisioner-setup has
+  # written provisioner.toml and handed over the account password and the
+  # state key. Without them this exits with instructions and compose leaves
+  # provisioner created but not started (no restart loop).
+  provisioner-check:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
+    user: "2098:2098"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        for f in /etc/conductor-provisioner/provisioner.toml /run/credentials/conductor-provisioner/account-password /run/credentials/conductor-provisioner/state-key; do
+        [ -r "$$f" ] && continue;
+        echo "conductor-provisioner is not configured yet ($$f is missing): run 'docker compose run --rm provisioner-setup'
+        (the steps are at the top of addons/provisioner.yaml), then 'docker compose up -d' and 'docker compose restart conductor'" >&2;
+        exit 1;
+        done;
+        echo "provisioner-check: conductor-provisioner is configured"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    network_mode: none
+    volumes:
+      - provisioner-etc:/etc/conductor-provisioner:ro
+      - provisioner-cred:/run/credentials/conductor-provisioner:ro
+    healthcheck:
+      disable: true
+    pids_limit: 16
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+  # One-shot: provisioner.toml (the managed OUs, conductor's role groups as
+  # privileged), the account password and the state key handed over,
+  # conductor's [provisioner] section.
+  provisioner-setup:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-provisioner:${SC_TAG:-0.2.0}
+    profiles: [setup]
+    user: "0:0"
+    entrypoint: ["/usr/bin/sc-setup", "provisioner"]
+    command: []
+    # docker compose run starts the DC first and waits for it: the setup
+    # needs the exported CA.
+    depends_on:
+      dc:
+        condition: service_healthy
+    environment:
+      SC_REALM: ${SC_DNS_DOMAIN}
+      SC_DC_HOST: ${SC_HOSTNAME:-dc1}.${SC_DNS_DOMAIN}
+      SC_DC_ADDRESS: ${SC_DC_ADDRESS:-${SC_NET:-172.30.93}.10}
+      SC_PROVISIONER_OUS: ${SC_PROVISIONER_OUS:-}
+      SC_PROVISIONER_ACCOUNT: ${SC_PROVISIONER_ACCOUNT:-}
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    network_mode: none
+    volumes:
+      - provisioner-etc:/etc/conductor-provisioner
+      - provisioner-state:/var/lib/conductor-provisioner
+      - provisioner-cred:/run/credentials/conductor-provisioner
+      - conductor-etc:/etc/conductor
+      - dc-public:/var/lib/sc-public:ro
+    secrets: [provisioner-ad-password]
+    healthcheck:
+      disable: true
+
+volumes:
+  provisioner-etc:
+  provisioner-state:
+  provisioner-cred:
+  provisioner-run:
+
+secrets:
+  provisioner-ad-password:
+    file: ./secrets/provisioner-ad-password

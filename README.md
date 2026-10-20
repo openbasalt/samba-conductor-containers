@@ -16,6 +16,7 @@ in the documentation repository.
 | `samba-conductor-idp` | conductor-idp (distroless) | UID 2095, no capabilities | same as the packages |
 | `samba-conductor-sync` | conductor-sync (distroless) | UID 2094, no capabilities | same as the packages |
 | `samba-conductor-backup` | conductor-backup (distroless) | UID 2097, no capabilities | same as the packages |
+| `samba-conductor-provisioner` | conductor-provisioner (distroless): the delegated AD account behind invitations, password resets by e-mail and the Google-first plan | UID 2098, no capabilities | same as the packages |
 
 Every container runs with a read-only root file system, `no-new-privileges`
 and no privileged mode. The DC never gets `CAP_SYS_ADMIN` or `CAP_SYS_TIME`:
@@ -27,7 +28,7 @@ keys reach the containers only as files, never in environment variables.
 
 | Path | What |
 |---|---|
-| `images/Containerfile` | the five images (targets `dc`, `conductor`, `idp`, `sync`, `backup`) |
+| `images/Containerfile` | the six images (targets `dc`, `conductor`, `idp`, `sync`, `backup`, `provisioner`) |
 | `versions.env` | the component package versions, the Debian snapshot and the base image digests a build uses |
 | `scripts/fetch-debs.sh` | downloads the packages and verifies them: the APT repository's signed `InRelease` (the OpenBasalt packages subkey, `keys/`), the `Packages` index, each `.deb` |
 | `cmd/sc-dc-init` | the DC image's entry point (PID 1): first boot, refusals, supervision, health |
@@ -60,7 +61,12 @@ variables and variables that look like secrets (`*PASSWORD*`, `*SECRET*`,
 
 Other commands: `sc-dc-init health` (the healthcheck), `sc-dc-init account
 idp|sync|backup` (service accounts; `backup` gets the three replication
-rights and nothing else), `sc-dc-init dns-name NAME...`,
+rights and nothing else), `sc-dc-init account provisioner [--ou DN]...
+[--google-first]` (conductor-provisioner's account: sensitive, a member of
+Domain Users only, with the reset-password entries inherited by the user
+objects of each managed OU, default `OU=People,<domain>`, created when
+missing; `--google-first` adds the rights of the Google-first plan),
+`sc-dc-init dns-name NAME...`,
 `sc-dc-init show-initial-password` and `forget-initial-password`.
 
 ## Quick start (lab)
@@ -85,12 +91,16 @@ administrator. Until it has run, conductor is created but not started: the
 one-shot `conductor-check` stops `docker compose up -d` with an error, and
 `docker compose logs conductor-check` says what to run. Add-ons are listed
 in `COMPOSE_FILE` in `.env` (`addons/idp.yaml`, `sync.yaml`, `backup.yaml`,
-`host-network.yaml`, `ipvlan.yaml`, `macvlan.yaml`, `provided-tls.yaml`,
+`provisioner.yaml`, `mail.yaml`, `host-network.yaml`, `ipvlan.yaml`, `macvlan.yaml`, `provided-tls.yaml`,
 `join.yaml`, `restore.yaml`); each file starts with the steps it needs.
-The idp, sync and backup add-ons hold their service back the same way
-until its setup one-shot has run (`idp-check`, `sync-check`,
-`backup-check`, each naming the setup command), and `idp-setup` and
-`sync-setup` wait for a healthy DC.
+The idp, sync, backup and provisioner add-ons hold their service back the
+same way until its setup one-shot has run (`idp-check`, `sync-check`,
+`backup-check`, `provisioner-check`, each naming the setup command), and
+`idp-setup`, `sync-setup` and `provisioner-setup` wait for a healthy DC.
+Invitations and password resets by e-mail need `provisioner.yaml` (its
+`provisioner-setup` also lists conductor's role groups as privileged for
+conductor-provisioner) and `mail.yaml` (`mail-setup` writes conductor's
+`[mail]` section; run it again when the relay changes).
 `ipvlan.yaml` and `macvlan.yaml` put the stack's network on a host
 interface (`SC_NET_PARENT`, `SC_NET_MODE`, `SC_NET_SUBNET`,
 `SC_NET_GATEWAY`, `SC_NET_RANGE`), with fixed addresses for the DC and

@@ -12,11 +12,11 @@
 #       to $GITHUB_OUTPUT when set, and a summary to stdout.
 #
 #   scripts/release-meta.sh tags LOCAL_TAG [IMAGE_PREFIX]
-#       Prints "<image> <immutable tag>" for the five images built as
+#       Prints "<image> <immutable tag>" for the six images built as
 #       <prefix><image>:LOCAL_TAG. Immutable tags (never overwritten):
 #         samba-conductor-dc       <conductor>-samba<samba>-r<N>
 #         samba-conductor          <conductor>-r<N>
-#         samba-conductor-idp/-sync/-backup   <component>-r<N>
+#         samba-conductor-idp/-sync/-backup/-provisioner   <component>-r<N>
 #       where <component> is the package version without the Debian
 #       revision ("~rc.1" becomes "-rc.1"), <samba> the upstream Samba
 #       version in the DC image and N is IMAGE_REVISION.
@@ -46,7 +46,7 @@ plan)
   if [ "$event" = push ] && [ "$ref_type" = tag ]; then
     [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]] || { echo "release-meta: tag $ref is not vX.Y.Z or vX.Y.Z-rc.N" >&2; exit 1; }
     [ "${ref#v}" = "$IMAGE_VERSION" ] || { echo "release-meta: tag $ref but IMAGE_VERSION=$IMAGE_VERSION in versions.env" >&2; exit 1; }
-    for var in CONDUCTOR_VERSION IDP_VERSION SYNC_VERSION BACKUP_VERSION; do
+    for var in CONDUCTOR_VERSION IDP_VERSION SYNC_VERSION BACKUP_VERSION PROVISIONER_VERSION; do
       v="${!var}"
       [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(~rc\.[0-9]+)?-[0-9]+$ ]] ||
         { echo "release-meta: $var=$v is not a released package version (X.Y.Z-N or X.Y.Z~rc.N-N)" >&2; exit 1; }
@@ -56,7 +56,7 @@ plan)
   else
     publish=false
     reasons+=("not a tag push ($event${ref:+ of $ref}): dry run")
-    for var in CONDUCTOR_VERSION IDP_VERSION SYNC_VERSION BACKUP_VERSION; do
+    for var in CONDUCTOR_VERSION IDP_VERSION SYNC_VERSION BACKUP_VERSION PROVISIONER_VERSION; do
       v="${!var}"
       [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(~rc\.[0-9]+)?-[0-9]+$ ]] ||
         reasons+=("$var=$v is a snapshot, not a released package: a tag run would refuse it")
@@ -68,7 +68,7 @@ plan)
     echo
     echo "- publish: **$publish**"
     echo "- image version: \`$version\` (revision r$IMAGE_REVISION)"
-    echo "- packages: conductor \`$CONDUCTOR_VERSION\`, conductor-idp \`$IDP_VERSION\`, conductor-sync \`$SYNC_VERSION\`, conductor-backup \`$BACKUP_VERSION\` from $APT_URL ($APT_SUITE)"
+    echo "- packages: conductor \`$CONDUCTOR_VERSION\`, conductor-idp \`$IDP_VERSION\`, conductor-sync \`$SYNC_VERSION\`, conductor-backup \`$BACKUP_VERSION\`, conductor-provisioner \`$PROVISIONER_VERSION\` from $APT_URL ($APT_SUITE)"
     echo "- Debian snapshot: \`$DEBIAN_SNAPSHOT\`"
     for r in "${reasons[@]}"; do echo "- $r"; done
   }
@@ -94,6 +94,7 @@ tags)
   echo "samba-conductor-idp $(tag_version "$IDP_VERSION")-$r"
   echo "samba-conductor-sync $(tag_version "$SYNC_VERSION")-$r"
   echo "samba-conductor-backup $(tag_version "$BACKUP_VERSION")-$r"
+  echo "samba-conductor-provisioner $(tag_version "$PROVISIONER_VERSION")-$r"
   ;;
 *)
   echo "usage: release-meta.sh plan | tags LOCAL_TAG [IMAGE_PREFIX]" >&2

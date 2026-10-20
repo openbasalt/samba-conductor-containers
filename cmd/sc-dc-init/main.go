@@ -5,6 +5,8 @@
 //	sc-dc-init health                the healthcheck (exit 0 = healthy)
 //	sc-dc-init account idp|sync|backup [--name N] [--password-file F]
 //	                                 create a service account (backup: replication rights only)
+//	sc-dc-init account provisioner [--ou DN]... [--google-first] [--name N] [--password-file F]
+//	                                 conductor-provisioner's account, delegated on the managed OUs
 //	sc-dc-init dns-name NAME...      add NAME.<domain> A <SC_HOST_IP>
 //	sc-dc-init show-initial-password | forget-initial-password
 //	sc-dc-init version
@@ -16,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/openbasalt/samba-conductor-containers/internal/dc"
@@ -34,6 +37,12 @@ const usage = `usage: sc-dc-init [COMMAND]
                                create a service account or set its password from a file
                                (default /run/secrets/idp-ad-password, sync-ad-password,
                                backup-account); backup gets the replication rights only
+  account provisioner [--ou DN]... [--google-first] [--name NAME] [--password-file FILE]
+                               conductor-provisioner's delegated account (default
+                               svc-conductor-prov, /run/secrets/provisioner-ad-password),
+                               sensitive, with the reset-password entries on each managed OU
+                               (default OU=People,<domain>; created when missing);
+                               --google-first adds the rights of the Google-first plan
   dns-name NAME...             add NAME.<domain> A <SC_HOST_IP> (conductor, idp)
   show-initial-password        print the generated Administrator password
   forget-initial-password      delete it from the volume
@@ -100,14 +109,36 @@ func start(ctx context.Context) error {
 
 func account(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: sc-dc-init account idp|sync|backup [--name NAME] [--password-file FILE]")
+		return fmt.Errorf("usage: sc-dc-init account idp|sync|backup|provisioner [--name NAME] [--password-file FILE]")
 	}
 	kind := args[0]
 	fs := flag.NewFlagSet("account", flag.ContinueOnError)
 	name := fs.String("name", "", "account name (default svc-conductor-<kind>)")
 	pw := fs.String("password-file", "", "file holding the password")
+	var ous ouList
+	googleFirst := false
+	if kind == "provisioner" {
+		fs.Var(&ous, "ou", "managed OU (DN), repeatable (default OU=People,<domain>)")
+		fs.BoolVar(&googleFirst, "google-first", false, "add the rights of the Google-first plan operations")
+	}
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected arguments: %v", fs.Args())
+	}
+	if kind == "provisioner" {
+		return dc.ProvisionerAccount(ctx, os.Stdout, dc.ProvisionerOptions{Name: *name, PasswordFile: *pw, OUs: ous, GoogleFirst: googleFirst})
+	}
 	return dc.Account(ctx, os.Stdout, kind, *name, *pw)
+}
+
+// ouList collects repeated --ou flags.
+type ouList []string
+
+func (l *ouList) String() string { return strings.Join(*l, "; ") }
+
+func (l *ouList) Set(v string) error {
+	*l = append(*l, v)
+	return nil
 }

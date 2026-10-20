@@ -144,7 +144,7 @@ print("BASE " + str(s.domain_dn()))
 func Account(ctx context.Context, out io.Writer, kind, name, pwFile string) error {
 	k, ok := accountKinds[kind]
 	if !ok {
-		return fmt.Errorf("unknown account kind %q (idp, sync or backup)", kind)
+		return fmt.Errorf("unknown account kind %q (idp, sync, backup or provisioner)", kind)
 	}
 	if name == "" {
 		name = k[0]

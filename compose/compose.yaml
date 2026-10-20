@@ -3,6 +3,7 @@
 # for production DCs). Configuration in .env (copy .env.example), secrets
 # in ./secrets (./make-secrets.sh). Add-ons: COMPOSE_FILE in .env, e.g.
 #   COMPOSE_FILE=compose.yaml:addons/idp.yaml:addons/sync.yaml:addons/backup.yaml
+#   (invitations and password resets by e-mail: addons/provisioner.yaml and addons/mail.yaml)
 #
 # First start, in order:
 #   ./make-secrets.sh
@@ -49,7 +50,7 @@ services:
   # Samba AD DC, chronyd (signed time for members) and conductor-helper.
   # Root inside the container with nine capabilities; never privileged.
   dc:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-dc:${SC_TAG:-0.1.2}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-dc:${SC_TAG:-0.2.0}
     hostname: ${SC_HOSTNAME:-dc1}
     domainname: ${SC_DNS_DOMAIN}
     environment: *dc-env
@@ -113,7 +114,7 @@ services:
 
   # conductor: unprivileged UID 2093, no capabilities, read-only root.
   conductor:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.2}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
     user: "2093:2093"
     restart: unless-stopped
     init: true
@@ -150,7 +151,7 @@ services:
   # this exits with instructions, compose leaves conductor created but not
   # started, and nothing restarts in a loop.
   conductor-check:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.2}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
     user: "2093:2093"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
@@ -178,7 +179,7 @@ services:
   # One-shot: conductor setup (as root), the TOTP key handed over.
   #   docker compose run --rm conductor-setup
   conductor-setup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.2}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
     profiles: [setup]
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "conductor"]

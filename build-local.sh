@@ -4,7 +4,7 @@
 #
 #   ./build-local.sh [--source apt|local] [--debs DIR] [--tag TAG]
 #                    [--platform linux/amd64|linux/arm64] [--output load|none]
-#                    [--image-version V] [dc conductor idp sync backup]
+#                    [--image-version V] [dc conductor idp sync backup provisioner]
 #
 # --source apt (default): the component packages pinned in versions.env,
 #   from the OpenBasalt APT repository, verified through its signed InRelease.
@@ -29,7 +29,7 @@ while [ "$#" -gt 0 ]; do
   *) TARGETS+=("$1"); shift ;;
   esac
 done
-[ "${#TARGETS[@]}" -gt 0 ] || TARGETS=(dc conductor idp sync backup)
+[ "${#TARGETS[@]}" -gt 0 ] || TARGETS=(dc conductor idp sync backup provisioner)
 # shellcheck disable=SC1091
 . ./versions.env
 [ -n "$IMAGE_VERSION_ARG" ] && IMAGE_VERSION="$IMAGE_VERSION_ARG"
@@ -43,13 +43,14 @@ case "$SOURCE" in
 apt)
   args+=(--build-arg "APT_URL=$APT_URL" --build-arg "APT_SUITE=$APT_SUITE"
     --build-arg "CONDUCTOR_VERSION=$CONDUCTOR_VERSION" --build-arg "IDP_VERSION=$IDP_VERSION"
-    --build-arg "SYNC_VERSION=$SYNC_VERSION" --build-arg "BACKUP_VERSION=$BACKUP_VERSION")
+    --build-arg "SYNC_VERSION=$SYNC_VERSION" --build-arg "BACKUP_VERSION=$BACKUP_VERSION"
+    --build-arg "PROVISIONER_VERSION=$PROVISIONER_VERSION")
   ;;
 local)
   [ -n "$DEBS" ] && [ -f "$DEBS/SHA256SUMS" ] || { echo "build-local.sh: --source local needs --debs DIR with SHA256SUMS" >&2; exit 2; }
-  # Only what the images need: the amd64/arm64 .debs of the four components.
+  # Only what the images need: the amd64/arm64 .debs of the five components.
   for f in "$DEBS"/SHA256SUMS "$DEBS"/SHA256SUMS.asc "$DEBS"/keyring.gpg; do [ -f "$f" ] && cp "$f" "$ctx/"; done
-  for p in conductor conductor-idp conductor-sync conductor-backup; do
+  for p in conductor conductor-idp conductor-sync conductor-backup conductor-provisioner; do
     for a in amd64 arm64; do
       newest="$(ls -1 "$DEBS"/"${p}"_*_"$a".deb 2>/dev/null | sort -V | tail -1 || true)"
       [ -n "$newest" ] && cp "$newest" "$ctx/"
@@ -68,7 +69,7 @@ esac
 SOURCE_DATE_EPOCH="$(git log -1 --format=%ct 2>/dev/null || date +%s)"
 export SOURCE_DATE_EPOCH
 declare -A NAME=([dc]=samba-conductor-dc [conductor]=samba-conductor [idp]=samba-conductor-idp
-  [sync]=samba-conductor-sync [backup]=samba-conductor-backup)
+  [sync]=samba-conductor-sync [backup]=samba-conductor-backup [provisioner]=samba-conductor-provisioner)
 for t in "${TARGETS[@]}"; do
   [ -n "${NAME[$t]:-}" ] || { echo "build-local.sh: unknown target $t" >&2; exit 2; }
   echo "== ${NAME[$t]}:$TAG ($SOURCE${PLATFORM:+, $PLATFORM})" >&2
