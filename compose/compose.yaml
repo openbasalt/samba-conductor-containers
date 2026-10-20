@@ -49,7 +49,7 @@ services:
   # Samba AD DC, chronyd (signed time for members) and conductor-helper.
   # Root inside the container with nine capabilities; never privileged.
   dc:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-dc:${SC_TAG:-0.1.1}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-dc:${SC_TAG:-0.1.2}
     hostname: ${SC_HOSTNAME:-dc1}
     domainname: ${SC_DNS_DOMAIN}
     environment: *dc-env
@@ -113,7 +113,7 @@ services:
 
   # conductor: unprivileged UID 2093, no capabilities, read-only root.
   conductor:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.1}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.2}
     user: "2093:2093"
     restart: unless-stopped
     init: true
@@ -150,7 +150,7 @@ services:
   # this exits with instructions, compose leaves conductor created but not
   # started, and nothing restarts in a loop.
   conductor-check:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.1}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.2}
     user: "2093:2093"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
@@ -178,7 +178,7 @@ services:
   # One-shot: conductor setup (as root), the TOTP key handed over.
   #   docker compose run --rm conductor-setup
   conductor-setup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.1}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.2}
     profiles: [setup]
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "conductor"]

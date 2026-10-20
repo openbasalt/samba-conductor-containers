@@ -17,7 +17,7 @@ services:
       - sync-run:/run/conductor-sync
 
   sync:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-0.1.1}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-0.1.2}
     user: "2094:2094"
     group_add: ["2093"]
     restart: unless-stopped
@@ -54,7 +54,7 @@ services:
   # key. Without them this exits with instructions and compose leaves sync
   # created but not started (no restart loop).
   sync-check:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.1}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.2}
     user: "2094:2094"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
@@ -86,7 +86,7 @@ services:
   # One-shot: conductor-sync.toml (dry-run), the bind password and the
   # state key handed over, conductor's [sync] section.
   sync-setup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-0.1.1}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-sync:${SC_TAG:-0.1.2}
     profiles: [setup]
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "sync"]
