@@ -1,13 +1,14 @@
 # syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1d5e1c465db5f998dca4e439981029b3b81fb39ed5
 # check=skip=SecretsUsedInArgOrEnv
 # (CREDENTIALS_DIRECTORY names a directory of files, not a secret.)
-# Samba Conductor container images. One file, five targets:
+# Samba Conductor container images. One file, six targets:
 #
-#   dc         samba-conductor-dc       Samba AD DC + chronyd + conductor-helper (+ conductor-backup for restores)
-#   conductor  samba-conductor          conductor (with Samba's GPO tooling)
-#   idp        samba-conductor-idp      conductor-idp (distroless)
-#   sync       samba-conductor-sync     conductor-sync (distroless)
-#   backup     samba-conductor-backup   conductor-backup (distroless)
+#   dc           samba-conductor-dc            Samba AD DC + chronyd + conductor-helper (+ conductor-backup for restores)
+#   conductor    samba-conductor               conductor (with Samba's GPO tooling)
+#   idp          samba-conductor-idp           conductor-idp (distroless)
+#   sync         samba-conductor-sync          conductor-sync (distroless)
+#   backup       samba-conductor-backup        conductor-backup (distroless)
+#   provisioner  samba-conductor-provisioner   conductor-provisioner (distroless)
 #
 # The component binaries come from the released .deb packages (verified:
 # scripts/fetch-debs.sh), never from a separate compile, so an image and a
@@ -41,6 +42,7 @@ ARG CONDUCTOR_VERSION
 ARG IDP_VERSION
 ARG SYNC_VERSION
 ARG BACKUP_VERSION
+ARG PROVISIONER_VERSION
 SHELL ["/bin/sh", "-eu", "-c"]
 RUN apt-get update -qq && \
     apt-get install -y -qq --no-install-recommends curl gpgv ca-certificates >/dev/null && \
@@ -50,8 +52,9 @@ COPY scripts/fetch-debs.sh /usr/local/bin/
 COPY --from=debs / /in/
 RUN APT_URL="$APT_URL" APT_SUITE="$APT_SUITE" fetch-debs.sh "$SC_SOURCE" "$TARGETARCH" /debs \
       "conductor=${CONDUCTOR_VERSION:-*}" "conductor-idp=${IDP_VERSION:-*}" \
-      "conductor-sync=${SYNC_VERSION:-*}" "conductor-backup=${BACKUP_VERSION:-*}" && \
-    for p in conductor conductor-idp conductor-sync conductor-backup; do \
+      "conductor-sync=${SYNC_VERSION:-*}" "conductor-backup=${BACKUP_VERSION:-*}" \
+      "conductor-provisioner=${PROVISIONER_VERSION:-*}" && \
+    for p in conductor conductor-idp conductor-sync conductor-backup conductor-provisioner; do \
       install -d "/x/$p" && dpkg-deb -x "/debs/$p.deb" "/x/$p"; \
       install -d "/lic/$p" && \
       cp "/x/$p/usr/share/doc/$p/copyright" "/x/$p/usr/share/doc/$p/NOTICE" "/x/$p/usr/share/doc/$p/THIRD-PARTY-LICENSES.gz" "/lic/$p/"; \
@@ -83,11 +86,13 @@ RUN groupadd --system --gid 2093 conductor && \
     groupadd --system --gid 2095 conductor-idp && \
     groupadd --system --gid 2096 example-rp && \
     groupadd --system --gid 2097 conductor-backup && \
+    groupadd --system --gid 2098 conductor-provisioner && \
     useradd --system --uid 2093 --gid 2093 --groups conductor-idp --home-dir /var/lib/conductor --no-create-home --shell /usr/sbin/nologin conductor && \
     useradd --system --uid 2094 --gid 2094 --groups conductor --home-dir /var/lib/conductor-sync --no-create-home --shell /usr/sbin/nologin conductor-sync && \
     useradd --system --uid 2095 --gid 2095 --groups conductor --home-dir /var/lib/conductor-idp --no-create-home --shell /usr/sbin/nologin conductor-idp && \
     useradd --system --uid 2096 --gid 2096 --no-create-home --shell /usr/sbin/nologin example-rp && \
-    useradd --system --uid 2097 --gid 2097 --home-dir /var/lib/conductor-backup --no-create-home --shell /usr/sbin/nologin conductor-backup
+    useradd --system --uid 2097 --gid 2097 --home-dir /var/lib/conductor-backup --no-create-home --shell /usr/sbin/nologin conductor-backup && \
+    useradd --system --uid 2098 --gid 2098 --groups conductor --home-dir /var/lib/conductor-provisioner --no-create-home --shell /usr/sbin/nologin conductor-provisioner
 
 # ---- samba-conductor-dc ----
 FROM debian-base AS dc
@@ -183,7 +188,9 @@ RUN d() { install -d -m "$1" -o "$2" -g "$3" "/tree/$4/$5"; } && \
     d 0500 2094 2094 sync run/credentials/conductor-sync && d 0750 2094 2093 sync run/conductor-sync && \
     d 0750 0 2097 backup etc/conductor-backup && d 0700 2097 2097 backup var/lib/conductor-backup && \
     d 0500 2097 2097 backup run/credentials/conductor-backup && d 0750 0 2093 backup run/conductor-helper && \
-    d 0700 2093 2093 backup var/lib/conductor && d 0755 0 0 backup etc/sc
+    d 0700 2093 2093 backup var/lib/conductor && d 0755 0 0 backup etc/sc && \
+    d 0750 0 2098 provisioner etc/conductor-provisioner && d 0700 2098 2098 provisioner var/lib/conductor-provisioner && \
+    d 0500 2098 2098 provisioner run/credentials/conductor-provisioner && d 0750 2098 2093 provisioner run/conductor-provisioner
 
 # ---- distroless base of the Go services ----
 FROM ${DISTROLESS_IMAGE} AS distroless-base
@@ -240,6 +247,24 @@ ENTRYPOINT ["/usr/bin/conductor-backup"]
 CMD ["run", "--scheduled", "--loop", "1m"]
 LABEL org.opencontainers.image.title="samba-conductor-backup" \
       org.opencontainers.image.description="Samba Conductor backup: encrypted, signed Samba AD backups" \
+      org.opencontainers.image.source="https://github.com/openbasalt/samba-conductor-containers" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.vendor="OpenBasalt"
+
+# ---- samba-conductor-provisioner ----
+FROM distroless-base AS provisioner
+ARG IMAGE_VERSION=0.0.0-dev
+COPY --from=dirs /tree/provisioner/ /
+COPY --from=fetch /x/conductor-provisioner/usr/bin/conductor-provisioner /usr/bin/
+COPY --from=fetch /lic/conductor-provisioner/ /usr/share/doc/conductor-provisioner/
+ENV CREDENTIALS_DIRECTORY=/run/credentials/conductor-provisioner
+USER 2098:2098
+HEALTHCHECK --interval=15s --timeout=10s --start-period=20s --retries=4 CMD ["/usr/bin/conductor-provisioner", "healthcheck", "--config", "/etc/conductor-provisioner/provisioner.toml"]
+ENTRYPOINT ["/usr/bin/conductor-provisioner"]
+CMD ["serve", "--config", "/etc/conductor-provisioner/provisioner.toml"]
+LABEL org.opencontainers.image.title="samba-conductor-provisioner" \
+      org.opencontainers.image.description="Samba Conductor provisioner: delegated AD writes for conductor (invitations, password reset by e-mail)" \
       org.opencontainers.image.source="https://github.com/openbasalt/samba-conductor-containers" \
       org.opencontainers.image.version="${IMAGE_VERSION}" \
       org.opencontainers.image.licenses="Apache-2.0" \

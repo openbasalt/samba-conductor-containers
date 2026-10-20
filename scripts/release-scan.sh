@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scan the five images and write their SBOMs (release workflow, one run per
+# Scan the six images and write their SBOMs (release workflow, one run per
 # architecture). For each image <prefix><name>:<tag>:
 #
 #   OUT/sbom/<name>-<arch>.cdx.json        CycloneDX 1.6 (syft)
@@ -31,7 +31,8 @@ for f in vex/*.json; do
 done
 
 failed=()
-for name in samba-conductor-dc samba-conductor samba-conductor-idp samba-conductor-sync samba-conductor-backup; do
+for name in samba-conductor-dc samba-conductor samba-conductor-idp samba-conductor-sync samba-conductor-backup \
+  samba-conductor-provisioner; do
   ref="$PREFIX$name:$TAG"
   base="$name-$ARCH"
   echo "== $ref" >&2

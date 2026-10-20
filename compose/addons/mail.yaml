@@ -1,0 +1,50 @@
+# Add-on: conductor's e-mail through an SMTP relay (invitations, password
+# resets by e-mail, notices after a password change; the first two also
+# need addons/provisioner.yaml). Writes the [mail] section of conductor.toml;
+# run mail-setup again whenever the relay changes.
+#   COMPOSE_FILE=compose.yaml:addons/mail.yaml
+#   SC_MAIL_HOST, SC_MAIL_FROM (and SC_MAIL_PORT, SC_MAIL_SECURITY,
+#     SC_MAIL_USERNAME, SC_MAIL_REPLY_TO, SC_MAIL_HELLO_NAME) in .env
+#   secrets/smtp-password: the relay password (empty: no authentication)
+#   secrets/mail-ca: a PEM CA for the relay's certificate (empty: the system roots)
+#   docker compose run --rm mail-setup               (after conductor-setup)
+#   docker compose restart conductor                 (conductor reads conductor.toml when it starts)
+# server.public_url (SC_PUBLIC_URL of conductor-setup) builds the links in
+# the messages.
+services:
+  # One-shot: conductor's [mail] section, the relay password handed over
+  # as conductor's smtp-password credential.
+  mail-setup:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
+    profiles: [setup]
+    user: "0:0"
+    entrypoint: ["/usr/bin/sc-setup", "mail"]
+    command: []
+    environment:
+      SC_MAIL_HOST: ${SC_MAIL_HOST:-}
+      SC_MAIL_PORT: ${SC_MAIL_PORT:-}
+      SC_MAIL_SECURITY: ${SC_MAIL_SECURITY:-}
+      SC_MAIL_USERNAME: ${SC_MAIL_USERNAME:-}
+      SC_MAIL_FROM: ${SC_MAIL_FROM:-}
+      SC_MAIL_REPLY_TO: ${SC_MAIL_REPLY_TO:-}
+      SC_MAIL_HELLO_NAME: ${SC_MAIL_HELLO_NAME:-}
+      SC_MAIL_MAX_PER_HOUR: ${SC_MAIL_MAX_PER_HOUR:-}
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt:
+      - no-new-privileges:true
+      - label=level:${SC_MCS_LEVEL:-s0:c93,c94}
+    network_mode: none
+    volumes:
+      - conductor-etc:/etc/conductor
+      - conductor-cred:/run/credentials/conductor
+    secrets: [smtp-password, mail-ca]
+    healthcheck:
+      disable: true
+
+secrets:
+  smtp-password:
+    file: ./secrets/smtp-password
+  mail-ca:
+    file: ./secrets/mail-ca

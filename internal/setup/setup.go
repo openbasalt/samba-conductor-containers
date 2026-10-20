@@ -1,5 +1,6 @@
 // Package setup is sc-setup: the one-shot configuration of the Go service
-// containers (conductor, conductor-idp, conductor-sync, conductor-backup).
+// containers (conductor, conductor-idp, conductor-sync, conductor-backup,
+// conductor-provisioner) and conductor's e-mail relay.
 // It runs as root in the service's own image (the distroless images have
 // no shell), writes the configuration volume, and hands each credential to
 // the service the way systemd's LoadCredential would: a 0400 copy owned by
@@ -53,6 +54,9 @@ var Allowed = []string{
 	"SC_SYNC_GOOGLE_CA", "SC_SYNC_INTERVAL",
 	"SC_HOSTNAME", "SC_BACKUP_S3_ENDPOINT", "SC_BACKUP_S3_REGION", "SC_BACKUP_S3_BUCKET", "SC_BACKUP_S3_PREFIX",
 	"SC_BACKUP_S3_CA", "SC_BACKUP_LOCAL_DIR",
+	"SC_PROVISIONER_ACCOUNT", "SC_PROVISIONER_OUS",
+	"SC_MAIL_HOST", "SC_MAIL_PORT", "SC_MAIL_SECURITY", "SC_MAIL_USERNAME", "SC_MAIL_FROM", "SC_MAIL_REPLY_TO",
+	"SC_MAIL_HELLO_NAME", "SC_MAIL_MAX_PER_HOUR",
 }
 
 // Setup carries one run.

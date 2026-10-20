@@ -1,7 +1,7 @@
 # Releasing the container images
 
 The release workflow (`.github/workflows/release.yml`) builds, tests, scans,
-signs and publishes the five images to Docker Hub (`docker.io/openbasalt`)
+signs and publishes the six images to Docker Hub (`docker.io/openbasalt`)
 and the GitHub Container Registry (`ghcr.io/openbasalt`), under their
 immutable tags and `testing`. The promote workflow
 (`.github/workflows/promote.yml`) later moves the version tags and `latest`
@@ -22,13 +22,17 @@ reviewed pull request put there:
   `IMAGE_VERSION=0.2.0`), or the release refuses to run. The default
   `SC_TAG` of the compose files is the same version (`make check` compares
   them), so a compose checkout of a release runs that release's images.
-- `CONDUCTOR_VERSION`, `IDP_VERSION`, `SYNC_VERSION`, `BACKUP_VERSION`: the
-  component packages exactly as published in the OpenBasalt APT repository
-  (`X.Y.Z-N` or `X.Y.Z~rc.N-N`). Snapshot versions (`+git<time>.<commit>`) are refused
+- `CONDUCTOR_VERSION`, `IDP_VERSION`, `SYNC_VERSION`, `BACKUP_VERSION`,
+  `PROVISIONER_VERSION`: the component packages exactly as published in
+  the OpenBasalt APT repository (`X.Y.Z-N` or `X.Y.Z~rc.N-N`).
+- `APT_SUITE`: the suites the packages come from, searched in order
+  (`"testing stable"` for a release under test: new packages from
+  `testing`, unchanged ones from `stable`); each suite's `InRelease` is
+  verified. Snapshot versions (`+git<time>.<commit>`) are refused
   on a tag; a dry run lists them as warnings. The images need component
   releases that include the `healthcheck` subcommands and
   `conductor-backup run --loop`.
-- `IMAGE_REVISION`: the `-rN` of the image tags, one value for the five
+- `IMAGE_REVISION`: the `-rN` of the image tags, one value for the six
   images. Raise it to rebuild the same component versions (Debian
   security updates, a new base image), and for a release that keeps a
   component at the version of an earlier release: that component's
@@ -74,7 +78,7 @@ overwritten (raise `IMAGE_REVISION` instead).
 |---|---|---|
 | `samba-conductor-dc` | `<conductor>-samba<samba>-r<N>` (for example `0.2.0-samba4.22.11-r1`) | `testing` |
 | `samba-conductor` | `<conductor>-r<N>` | `testing` |
-| `samba-conductor-idp`, `-sync`, `-backup` | `<component>-r<N>` | `testing` |
+| `samba-conductor-idp`, `-sync`, `-backup`, `-provisioner` | `<component>-r<N>` | `testing` |
 
 `<component>` is the package version without the Debian revision, with
 `~rc.N` written `-rc.N`. Both registries carry the same tags and digests.
@@ -104,7 +108,7 @@ are never moved), a `latest` that names a newer version, and release
 candidates. Immutable tags are only read.
 
 The version tags are the containers release version, the same for the
-five images: `samba-conductor-idp:0.1.0` is the conductor-idp image of
+six images: `samba-conductor-idp:0.1.0` is the conductor-idp image of
 containers release `0.1.0`. The component versions inside are in the
 immutable tags and in `/usr/share/samba-conductor/image.env` of the DC
 image.
@@ -113,7 +117,7 @@ image.
 
 - Organization or repository secret `DOCKERHUB_TOKEN` and variable
   `DOCKERHUB_USERNAME` (Docker Hub access token with write access to the
-  five repositories).
+  six repositories).
 - Environment `container-publish`: deployment from `v*` tags only, a
   required reviewer (used by the release and the promote workflows; the
   promote workflow is run from the release tag for this reason).
@@ -121,7 +125,7 @@ image.
   reviewer, secrets `RELEASE_SIGNING_KEY` and `RELEASE_SIGNING_PASSPHRASE`
   and variable `RELEASE_SIGNING_FPR` (the packages subkey). Without the key
   `SHA256SUMS` is published unsigned, with a warning.
-- After the first staging push, the five GHCR packages set to public and
+- After the first staging push, the six GHCR packages set to public and
   linked to this repository (GHCR is a public registry next to Docker
   Hub, with the same digests).
 

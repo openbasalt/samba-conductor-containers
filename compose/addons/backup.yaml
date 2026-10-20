@@ -24,7 +24,7 @@ services:
       - ./backup-recipients.txt:/etc/sc/backup-recipients.txt:ro
 
   conductor-backup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-backup:${SC_TAG:-0.1.2}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-backup:${SC_TAG:-0.2.0}
     user: "2097:2097"
     restart: unless-stopped
     depends_on:
@@ -58,7 +58,7 @@ services:
   # Without them this exits with instructions and compose leaves
   # conductor-backup created but not started (no restart loop).
   backup-check:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.1.2}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
     user: "2097:2097"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
@@ -90,7 +90,7 @@ services:
   # One-shot: conductor-backup.toml, the signing key (generated once) and
   # the S3 credential handed over, the state directories.
   backup-setup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-backup:${SC_TAG:-0.1.2}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-backup:${SC_TAG:-0.2.0}
     profiles: [setup]
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "backup"]

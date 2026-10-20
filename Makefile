@@ -63,7 +63,7 @@ $(GOVULNCHECK):
 		GOBIN="$$tmp" go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) && \
 		mv "$$tmp/govulncheck" $@
 
-# The five images from the packages pinned in versions.env (nothing is
+# The six images from the packages pinned in versions.env (nothing is
 # pushed); build-local.sh --help lists the options.
 images:
 	./build-local.sh

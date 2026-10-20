@@ -19,16 +19,20 @@ ok() { echo "ci-smoke: ok: $*"; }
 # The images' own users (section "Users" of the README): a wrong USER in an
 # image would break the SO_PEERCRED checks between containers.
 declare -A USERS=([samba-conductor]=2093:2093 [samba-conductor-idp]=2095:2095
-  [samba-conductor-sync]=2094:2094 [samba-conductor-backup]=2097:2097)
+  [samba-conductor-sync]=2094:2094 [samba-conductor-backup]=2097:2097
+  [samba-conductor-provisioner]=2098:2098)
 for img in "${!USERS[@]}"; do
   u="$(docker image inspect -f '{{.Config.User}}' "$PREFIX$img:$TAG")"
   [ "$u" = "${USERS[$img]}" ] || fail "$img runs as '$u', want ${USERS[$img]}"
 done
 ok "service images run as their fixed UIDs"
 
-ip="$(hostname -I | awk '{print $1}')"
-printf 'SC_DNS_DOMAIN=ci.example.test\nSC_NETBIOS=CI\nSC_HOSTNAME=dc1\nSC_HOST_IP=%s\nSC_TAG=%s\nSC_IMAGE_PREFIX=%s\nSC_ALLOW_UNSYNCED_CLOCK=1\n' \
-  "$ip" "$TAG" "$PREFIX" >.env
+# SMOKE_HOST_IP and SMOKE_NET: another address and bridge network when the
+# host's first address or the default network is taken (a lab host).
+ip="${SMOKE_HOST_IP:-$(hostname -I | awk '{print $1}')}"
+# The provisioner add-on is part of the stack: its guard is checked below.
+printf 'SC_DNS_DOMAIN=ci.example.test\nSC_NETBIOS=CI\nSC_HOSTNAME=dc1\nSC_HOST_IP=%s\nSC_TAG=%s\nSC_IMAGE_PREFIX=%s\nSC_ALLOW_UNSYNCED_CLOCK=1\nSC_NET=%s\nCOMPOSE_FILE=compose.yaml:addons/provisioner.yaml\n' \
+  "$ip" "$TAG" "$PREFIX" "${SMOKE_NET:-172.30.93}" >.env
 trap 'docker compose logs dc | tail -n 80 || true; docker compose down -v || true; rm -rf .env secrets' EXIT
 ./make-secrets.sh 2>/dev/null
 
@@ -96,3 +100,15 @@ cid="$(docker compose ps -aq conductor)"
 [ "$(docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$cid")" = "created 0" ] ||
   fail "conductor is not held back: $(docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$cid")"
 ok "conductor waits for conductor-setup, with instructions"
+
+# The same for conductor-provisioner before provisioner-setup.
+if docker compose up -d provisioner 2>/dev/null; then
+  fail "provisioner started without its configuration"
+fi
+docker compose logs provisioner-check | grep -q 'conductor-provisioner is not configured yet' ||
+  fail "provisioner-check did not explain the missing configuration"
+pid="$(docker compose ps -aq provisioner)"
+[ -n "$pid" ] || fail "no provisioner container"
+[ "$(docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$pid")" = "created 0" ] ||
+  fail "provisioner is not held back: $(docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$pid")"
+ok "provisioner waits for provisioner-setup, with instructions"

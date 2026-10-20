@@ -62,7 +62,7 @@ mkdir -p "$res"
 # and digest, which step 1 checks.
 ref_reg="${REGISTRIES%% *}"
 mapfile -t lines < <(awk -v p="$ref_reg/" 'index($0, p) == 1' "$images")
-[ "${#lines[@]}" -eq 5 ] || die "$images lists ${#lines[@]} images in $ref_reg, want 5"
+[ "${#lines[@]}" -eq 6 ] || die "$images lists ${#lines[@]} images in $ref_reg, want 6"
 
 for line in "${lines[@]}"; do
   rest="${line#"$ref_reg/"}"
