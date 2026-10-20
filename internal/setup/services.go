@@ -66,7 +66,14 @@ func (s *Setup) Conductor(ctx context.Context) error {
 				args = append(args, g[0], v)
 			}
 		}
-		if err := s.runCmd(ctx, append(pw, '\n'), s.bin("conductor"), args...); err != nil {
+		// conductor setup ends with the package's next step (systemctl);
+		// in the stack the next step is compose's, so that line is rewritten.
+		out := newLineRewriter(s.Out, containerNextStep)
+		err = s.runCmdTo(ctx, out, append(pw, '\n'), s.bin("conductor"), args...)
+		if ferr := out.Flush(); err == nil {
+			err = ferr
+		}
+		if err != nil {
 			return fmt.Errorf("%w: conductor setup failed (its output is above) and %s was not written; check that the dc "+
 				"service is healthy (docker compose ps dc) and that ./secrets/admin-password holds the domain Administrator's "+
 				"password, then run conductor-setup again", err, cfg)
@@ -88,6 +95,24 @@ func (s *Setup) Conductor(ctx context.Context) error {
 	}
 	s.logf("conductor configured; keep a copy of %s/credentials/totp-key offline (restore.md section 0)", etc)
 	return nil
+}
+
+// nextAddon returns the step after idp-setup and sync-setup: conductor reads
+// conductor.toml only when it starts, and `docker compose up -d` leaves an
+// already running conductor as it is, so the restart loads the section the
+// setup enabled.
+func nextAddon(section string) string {
+	return "docker compose up -d, then docker compose restart conductor (conductor reads conductor.toml when it starts; " +
+		"the restart enables its " + section + " section)"
+}
+
+// containerNextStep rewrites the next step conductor setup prints for the
+// packages (enable the systemd units) to the stack's.
+func containerNextStep(line string) string {
+	if strings.HasPrefix(line, "next: systemctl ") {
+		return "next: docker compose up -d"
+	}
+	return line
 }
 
 // enableInConductor edits conductor.toml (on the conductor-etc volume) for
@@ -214,7 +239,7 @@ allowed_users = ["conductor"]
 	if err != nil {
 		return err
 	}
-	s.logf("conductor-idp configured (%s); restart conductor to enable its Single sign-on section", issuer)
+	s.logf("conductor-idp configured (%s); next: %s", issuer, nextAddon("Single sign-on"))
 	return nil
 }
 
@@ -325,7 +350,7 @@ socket_group = "2093"
 	}); err != nil {
 		return err
 	}
-	s.logf("conductor-sync configured (dry-run); restart conductor to enable its Google Workspace sync section")
+	s.logf("conductor-sync configured (dry-run); next: %s", nextAddon("Google Workspace sync"))
 	return nil
 }
 

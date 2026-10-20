@@ -14,7 +14,8 @@ import (
 
 // fakeConductor stands in for /usr/bin/conductor: FAKE_MODE=fail exits 1,
 // noconfig exits 0 without writing anything, ok writes the TOTP key and
-// conductor.toml into FAKE_ETC the way conductor setup does (key first).
+// conductor.toml into FAKE_ETC the way conductor setup does (key first)
+// and ends with the packages' next step, as conductor setup does.
 const fakeConductor = `#!/bin/sh
 case "$FAKE_MODE" in
 fail) echo "conductor: setup: ldap: connection refused" >&2; exit 1 ;;
@@ -23,6 +24,9 @@ ok)
   mkdir -p "$FAKE_ETC/credentials"
   echo key >"$FAKE_ETC/credentials/totp-key"
   echo '[server]' >"$FAKE_ETC/conductor.toml"
+  echo "configuration written to $FAKE_ETC/conductor.toml"
+  echo "enrollment link on stderr" >&2
+  printf 'next: systemctl enable --now conductor-helper conductor\n'
   ;;
 esac
 `
@@ -63,9 +67,20 @@ func conductorFixture(t *testing.T, mode string, withPassword bool) (*Setup, str
 }
 
 func TestConductorSetupOK(t *testing.T) {
-	s, root, _ := conductorFixture(t, "ok", true)
+	s, root, out := conductorFixture(t, "ok", true)
 	if err := s.Conductor(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	// The packages' next step is replaced by the stack's; the rest of
+	// conductor setup's output passes through in order.
+	got := out.String()
+	if strings.Contains(got, "systemctl") {
+		t.Errorf("the packages' next step was relayed:\n%s", got)
+	}
+	want := "configuration written to " + filepath.Join(root, "etc/conductor/conductor.toml") +
+		"\nenrollment link on stderr\nnext: docker compose up -d\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("output lacks %q:\n%s", want, got)
 	}
 	for _, p := range []string{"etc/conductor/conductor.toml", "run/credentials/conductor/totp-key"} {
 		if _, err := os.Stat(filepath.Join(root, p)); err != nil {

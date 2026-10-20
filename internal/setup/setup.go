@@ -226,11 +226,17 @@ func tlist(v []string) string {
 
 // runCmd runs a program with optional stdin and its output passed through.
 func (s *Setup) runCmd(ctx context.Context, stdin []byte, name string, args ...string) error {
+	return s.runCmdTo(ctx, s.Out, stdin, name, args...)
+}
+
+// runCmdTo runs a program with optional stdin, its standard output and
+// error both written to out (one pipe, so their order is kept).
+func (s *Setup) runCmdTo(ctx context.Context, out io.Writer, stdin []byte, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
-	cmd.Stdout, cmd.Stderr = s.Out, s.Out
+	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s %s: %w", filepath.Base(name), strings.Join(args[:min(2, len(args))], " "), err)
 	}
@@ -289,4 +295,42 @@ func tomlSection(text, section string, set [][2]string) string {
 	}
 	out := append(append(append([]string(nil), lines[:start+1]...), body...), lines[end:]...)
 	return strings.Join(out, "\n") + "\n"
+}
+
+// lineRewriter passes output through line by line, each complete line
+// given to rewrite first. Flush writes a last line without a newline.
+type lineRewriter struct {
+	out     io.Writer
+	rewrite func(string) string
+	buf     []byte
+}
+
+func newLineRewriter(out io.Writer, rewrite func(string) string) *lineRewriter {
+	return &lineRewriter{out: out, rewrite: rewrite}
+}
+
+func (w *lineRewriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		line := w.rewrite(string(w.buf[:i]))
+		w.buf = w.buf[i+1:]
+		if _, err := io.WriteString(w.out, line+"\n"); err != nil {
+			return len(p), err
+		}
+	}
+}
+
+// Flush writes what is left of an unterminated last line.
+func (w *lineRewriter) Flush() error {
+	if len(w.buf) == 0 {
+		return nil
+	}
+	line := w.rewrite(string(w.buf))
+	w.buf = nil
+	_, err := io.WriteString(w.out, line)
+	return err
 }

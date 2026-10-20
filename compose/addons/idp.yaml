@@ -6,6 +6,7 @@
 #   docker compose exec dc sc-dc-init dns-name conductor idp
 #   docker compose run --rm idp-setup                (waits for a healthy DC)
 #   docker compose up -d
+#   docker compose restart conductor                 (loads the section idp-setup enabled)
 # Started before idp-setup, idp stays down and the one-shot idp-check says
 # so (docker compose logs idp-check).
 services:
@@ -73,7 +74,7 @@ services:
         for f in /etc/conductor-idp/idp.toml /run/credentials/conductor-idp/master-key /run/credentials/conductor-idp/ad-password; do
         [ -r "$$f" ] && continue;
         echo "conductor-idp is not configured yet ($$f is missing): run 'docker compose run --rm idp-setup'
-        (the steps are at the top of addons/idp.yaml), then 'docker compose up -d'" >&2;
+        (the steps are at the top of addons/idp.yaml), then 'docker compose up -d' and 'docker compose restart conductor'" >&2;
         exit 1;
         done;
         echo "idp-check: conductor-idp is configured"
