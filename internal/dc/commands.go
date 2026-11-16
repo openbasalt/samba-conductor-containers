@@ -60,7 +60,11 @@ func Health(ctx context.Context, out io.Writer) error {
 		fmt.Fprintln(out, "warning: the host's kernel clock is not synchronized")
 	}
 	if _, err := os.Stat(InitialPasswordFile); err == nil {
-		fmt.Fprintln(out, "warning: the generated Administrator password is still on the volume (sc-dc-init forget-initial-password)")
+		fmt.Fprintln(out, "warning: the generated Administrator password has not been read yet (sc-dc-init show-initial-password; "+
+			"it is lost when the container restarts)")
+	}
+	if _, err := os.Stat(LegacyInitialPasswordFile); err == nil {
+		fmt.Fprintln(out, "warning: a generated Administrator password is on the data volume (restart the container to move it off)")
 	}
 	if b, err := os.ReadFile(RunDir + "/dbcheck.txt"); err == nil {
 		first, _, _ := strings.Cut(string(b), "\n")
@@ -86,23 +90,77 @@ func alive(pid int) bool {
 	return i > 0 && len(s) > i+2 && s[i+2] != 'Z'
 }
 
-// ShowInitialPassword prints the generated Administrator password.
+// ShowInitialPassword prints the generated Administrator password once:
+// the file is removed as it is shown.
 func ShowInitialPassword(out io.Writer) error {
-	b, err := os.ReadFile(InitialPasswordFile)
-	if err != nil {
-		return fmt.Errorf("no generated password: %w (it was given as the admin-password secret, or already forgotten)", err)
-	}
-	_, err = out.Write(b)
-	return err
+	return showInitialPassword(out, InitialPasswordFile, LegacyInitialPasswordFile)
 }
 
-// ForgetInitialPassword deletes the generated password file.
-func ForgetInitialPassword(out io.Writer) error {
-	if err := os.Remove(InitialPasswordFile); err != nil {
-		return err
+func showInitialPassword(out io.Writer, paths ...string) error {
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		// Removed before it is written out: a password that cannot be
+		// removed is not shown, so it is never shown twice.
+		if err := os.Remove(p); err != nil {
+			return err
+		}
+		if _, err := out.Write(b); err != nil {
+			return err
+		}
+		return nil
 	}
-	fmt.Fprintln(out, "removed", InitialPasswordFile)
+	return errors.New("no generated password: it was given as the admin-password secret, already shown or forgotten, " +
+		"or the container restarted since (reset it with `samba-tool user setpassword Administrator` in the DC container)")
+}
+
+// ForgetInitialPassword deletes the generated password without showing it.
+func ForgetInitialPassword(out io.Writer) error {
+	return forgetInitialPassword(out, InitialPasswordFile, LegacyInitialPasswordFile)
+}
+
+func forgetInitialPassword(out io.Writer, paths ...string) error {
+	removed := false
+	for _, p := range paths {
+		err := os.Remove(p)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		removed = true
+		fmt.Fprintln(out, "removed", p)
+	}
+	if !removed {
+		return errors.New("no generated password to forget")
+	}
 	return nil
+}
+
+// moveLegacyInitialPassword takes a generated password that an earlier
+// image left on the data volume off it, onto the tmpfs (where it can still
+// be shown once until the container restarts). It reports whether a file
+// was moved.
+func moveLegacyInitialPassword(legacy, tmpfs string) (bool, error) {
+	b, err := os.ReadFile(legacy)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := os.Lstat(tmpfs); errors.Is(err, os.ErrNotExist) {
+		if err := writeInitialPassword(tmpfs, strings.TrimRight(string(b), "\r\n")); err != nil {
+			return false, err
+		}
+	}
+	return true, os.Remove(legacy)
 }
 
 // accountKinds are the service accounts `sc-dc-init account` creates:

@@ -11,7 +11,7 @@
 # so (docker compose logs idp-check).
 services:
   dc:
-    secrets: [admin-password, idp-ad-password]
+    secrets: [idp-ad-password]
 
   conductor:
     # The conductor-idp group: conductor creates its 2FA socket for the IdP

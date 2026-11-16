@@ -7,9 +7,13 @@
 #
 # First start, in order:
 #   ./make-secrets.sh
-#   docker compose up -d dc                      (provisions the domain, ~1 min)
+#   docker compose -f compose.yaml -f addons/provision.yaml up -d dc
+#                                                (provisions the domain, ~1 min; the only start
+#                                                 that gives the DC the admin-password secret)
 #   docker compose run --rm conductor-setup      (prints the first administrator's enrollment link)
-#   docker compose up -d
+#   docker compose up -d                         (recreates the DC without the secret)
+# Then move ./secrets/admin-password to your password manager: nothing in
+# the running stack needs it again.
 # Started before conductor-setup, conductor stays down and the one-shot
 # conductor-check says so (docker compose logs conductor-check).
 name: ${SC_PROJECT:-samba-conductor}
@@ -77,7 +81,8 @@ services:
       - helper-run:/run/conductor-helper
       # conductor's database, for the backup snapshot (VACUUM INTO).
       - conductor-state:/var/lib/conductor
-    secrets: [admin-password]
+    # No admin-password here: the DC needs it only for the first boot
+    # (addons/provision.yaml), so it is not mounted while the DC runs.
     # The DC is its own resolver.
     dns: [127.0.0.1]
     dns_search: ["${SC_DNS_DOMAIN}"]
@@ -238,7 +243,7 @@ volumes:
   conductor-cred:
 
 secrets:
-  # Remove it from the stack once the domain exists (the DC warns while it
-  # is mounted).
+  # Mounted into the DC only by addons/provision.yaml (first boot) and into
+  # the conductor-setup one-shot; the DC warns while it is mounted.
   admin-password:
     file: ./secrets/admin-password

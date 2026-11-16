@@ -2,6 +2,7 @@ package dc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -205,5 +206,90 @@ func TestDNSRelay(t *testing.T) {
 	n, err := c.Read(b)
 	if err != nil || string(b[:n]) != "pong:q1" {
 		t.Fatalf("%q %v", b[:n], err)
+	}
+}
+
+func TestInitialPasswordShownOnce(t *testing.T) {
+	d := t.TempDir()
+	tmpfs, legacy := filepath.Join(d, "run", "initial-admin-password"), filepath.Join(d, "initial-admin-password")
+	if err := writeInitialPassword(tmpfs, "Sc-secret9"); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(tmpfs); err != nil || fi.Mode().Perm() != 0o400 {
+		t.Fatalf("mode: %v %v", fi, err)
+	}
+	if err := writeInitialPassword(tmpfs, "other"); err == nil {
+		t.Fatal("an existing password file was replaced")
+	}
+	var out strings.Builder
+	if err := showInitialPassword(&out, tmpfs, legacy); err != nil || out.String() != "Sc-secret9\n" {
+		t.Fatalf("show: %q %v", out.String(), err)
+	}
+	if _, err := os.Stat(tmpfs); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the password is still there after it was shown")
+	}
+	out.Reset()
+	if err := showInitialPassword(&out, tmpfs, legacy); err == nil || out.Len() != 0 {
+		t.Fatal("shown twice")
+	}
+	if err := forgetInitialPassword(&out, tmpfs, legacy); err == nil {
+		t.Fatal("forgot nothing without an error")
+	}
+}
+
+func TestMoveLegacyInitialPassword(t *testing.T) {
+	d := t.TempDir()
+	tmpfs, legacy := filepath.Join(d, "run", "initial-admin-password"), filepath.Join(d, "initial-admin-password")
+	if moved, err := moveLegacyInitialPassword(legacy, tmpfs); moved || err != nil {
+		t.Fatalf("nothing to move: %v %v", moved, err)
+	}
+	if err := os.WriteFile(legacy, []byte("Sc-old9\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if moved, err := moveLegacyInitialPassword(legacy, tmpfs); !moved || err != nil {
+		t.Fatalf("move: %v %v", moved, err)
+	}
+	if _, err := os.Stat(legacy); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the password is still on the volume")
+	}
+	b, err := os.ReadFile(tmpfs)
+	if err != nil || string(b) != "Sc-old9\n" {
+		t.Fatalf("tmpfs copy: %q %v", b, err)
+	}
+	var out strings.Builder
+	if err := forgetInitialPassword(&out, tmpfs, legacy); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJoinChecks(t *testing.T) {
+	out := "# record 1\ndn: \ncurrentTime: 20261116120000.0Z\ndnsHostName: DC1.Example.Test\n\n# returned 1 records\n"
+	info, err := parseRootDSE(out, "EXAMPLE.TEST")
+	if err != nil || info.HostName != "dc1.example.test" || info.CurrentTime.Format(time.RFC3339) != "2026-11-16T12:00:00Z" {
+		t.Fatalf("%+v %v", info, err)
+	}
+	for _, bad := range []string{
+		"currentTime: 20261116120000.0Z\n",
+		"currentTime: 20261116120000.0Z\ndnsHostName: dc1.other.test\n",
+		"currentTime: 20261116120000.0Z\ndnsHostName: 192.0.2.5\n",
+		"currentTime: 20261116120000.0Z\ndnsHostName: dc1.example.test.evil\n",
+		"dnsHostName: dc1.example.test\n",
+	} {
+		if _, err := parseRootDSE(bad, "EXAMPLE.TEST"); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+	c, _, _ := Load(env("SC_MODE=join", "SC_REALM=example.test", "SC_HOSTNAME=dc2", "SC_HOST_IP=192.0.2.10", "SC_JOIN_DC=192.0.2.5"))
+	args := strings.Join(staleDCSearchArgs(c, info.HostName), " ")
+	for _, want := range []string{"-H ldap://dc1.example.test ", "--use-kerberos=required", "--option=client ldap sasl wrapping=seal",
+		`-U EXAMPLE.TEST\Administrator`, "-b DC=example,DC=test", "(sAMAccountName=DC2$)"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("missing %q in %s", want, args)
+		}
+	}
+	for _, never := range []string{"-k no", "192.0.2.5", "ldaps", "%"} {
+		if strings.Contains(args, never) {
+			t.Errorf("%q in %s", never, args)
+		}
 	}
 }

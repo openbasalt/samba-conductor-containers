@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf16"
 
@@ -46,13 +47,32 @@ func (r *Runner) provision(ctx context.Context) error {
 		return err
 	}
 	if generated {
-		if err := os.WriteFile(InitialPasswordFile, []byte(pw+"\n"), 0o400); err != nil {
+		if err := writeInitialPassword(InitialPasswordFile, pw); err != nil {
 			return err
 		}
-		r.logf("no admin-password secret: generated the Administrator password into %s (read it with "+
-			"`sc-dc-init show-initial-password`, then `sc-dc-init forget-initial-password`)", InitialPasswordFile)
+		r.logf("no admin-password secret: generated the Administrator password on the container's tmpfs (never the volume); " +
+			"read it once with `sc-dc-init show-initial-password` (it is removed as it is shown, and lost when the container " +
+			"restarts) and keep it in your password manager")
 	}
 	return nil
+}
+
+// writeInitialPassword writes a generated password to p (tmpfs), 0400,
+// refusing to replace or follow anything already there.
+func writeInitialPassword(p, pw string) error {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o400)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(pw + "\n"); err != nil {
+		_ = f.Close()
+		_ = os.Remove(p)
+		return err
+	}
+	return f.Close()
 }
 
 // adminPassword reads the admin-password secret or generates one.
@@ -85,8 +105,7 @@ func unicodePwd(pw string) string {
 // setAdministratorPassword writes the password through an LDIF file on the
 // container's tmpfs (never a command line or the environment).
 func (r *Runner) setAdministratorPassword(ctx context.Context, pw string) error {
-	base := "DC=" + strings.ReplaceAll(r.Cfg.DNSDomain(), ".", ",DC=")
-	ldif := fmt.Sprintf("dn: CN=Administrator,CN=Users,%s\nchangetype: modify\nreplace: unicodePwd\nunicodePwd:: %s\n", base, unicodePwd(pw))
+	ldif := fmt.Sprintf("dn: CN=Administrator,CN=Users,%s\nchangetype: modify\nreplace: unicodePwd\nunicodePwd:: %s\n", r.Cfg.domainDN(), unicodePwd(pw))
 	f, err := os.CreateTemp(RunDir, "admin-*.ldif")
 	if err != nil {
 		return err
@@ -129,10 +148,14 @@ func (r *Runner) join(ctx context.Context) error {
 		defer relay.Close()
 		r.logf("DNS for the join: relayed from 127.0.0.1 to %s", c.JoinDC)
 	}
-	if err := r.checkSkew(ctx); err != nil {
+	info, err := r.readJoinDC(ctx)
+	if err != nil {
 		return err
 	}
-	if err := r.checkStaleDC(ctx, env); err != nil {
+	if err := r.checkSkew(info); err != nil {
+		return err
+	}
+	if err := r.checkStaleDC(ctx, env, info); err != nil {
 		return err
 	}
 	_ = os.Remove(DefaultSmbConf)
@@ -158,24 +181,65 @@ func (r *Runner) joinKrb5() (string, error) {
 	return p, os.WriteFile(p, []byte(s), 0o644)
 }
 
-var currentTimeRE = regexp.MustCompile(`(?m)^currentTime: (\d{14})\.0Z`)
+var (
+	currentTimeRE = regexp.MustCompile(`(?m)^currentTime: (\d{14})\.0Z`)
+	dnsHostNameRE = regexp.MustCompile(`(?m)^dnsHostName: (\S+)\s*$`)
+	dcNameRE      = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62})(\.[a-z0-9]([a-z0-9-]{0,62}))+$`)
+)
 
-// checkSkew compares this host's clock with the target DC's (rootDSE
-// currentTime, anonymous): Kerberos refuses more than 5 minutes.
-func (r *Runner) checkSkew(ctx context.Context) error {
-	out, err := exec.CommandContext(ctx, "/usr/bin/ldbsearch", "-H", "ldap://"+r.Cfg.JoinDC, "-s", "base", "-b", "", "currentTime").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("reading the time of %s (rootDSE): %v: %s", r.Cfg.JoinDC, err, strings.TrimSpace(string(out)))
-	}
-	m := currentTimeRE.FindStringSubmatch(string(out))
+// joinDCInfo is what the join reads anonymously from SC_JOIN_DC's rootDSE.
+// None of it is trusted: the clock only guards against a skew Kerberos
+// would refuse anyway, and the host name is only the Kerberos target of the
+// authenticated check, which fails unless the KDC vouches for that host.
+type joinDCInfo struct {
+	CurrentTime time.Time
+	HostName    string
+}
+
+// parseRootDSE reads currentTime and dnsHostName from ldbsearch output and
+// checks that the host name lies in the realm.
+func parseRootDSE(out, realm string) (joinDCInfo, error) {
+	var info joinDCInfo
+	m := currentTimeRE.FindStringSubmatch(out)
 	if m == nil {
-		return fmt.Errorf("%s returned no currentTime", r.Cfg.JoinDC)
+		return info, errors.New("no currentTime in the rootDSE")
 	}
 	t, err := time.Parse("20060102150405", m[1])
 	if err != nil {
-		return err
+		return info, err
 	}
-	skew := time.Since(t)
+	info.CurrentTime = t
+	h := dnsHostNameRE.FindStringSubmatch(out)
+	if h == nil {
+		return info, errors.New("no dnsHostName in the rootDSE")
+	}
+	name := strings.ToLower(strings.TrimSuffix(h[1], "."))
+	if !dcNameRE.MatchString(name) || !strings.HasSuffix(name, "."+strings.ToLower(realm)) {
+		return info, fmt.Errorf("the rootDSE names the DC %q, which is not a host of %s", name, realm)
+	}
+	info.HostName = name
+	return info, nil
+}
+
+// readJoinDC reads the rootDSE of SC_JOIN_DC (anonymous; nothing secret is
+// sent).
+func (r *Runner) readJoinDC(ctx context.Context) (joinDCInfo, error) {
+	out, err := exec.CommandContext(ctx, "/usr/bin/ldbsearch", "-H", "ldap://"+r.Cfg.JoinDC, "-s", "base", "-b", "",
+		"currentTime", "dnsHostName").CombinedOutput()
+	if err != nil {
+		return joinDCInfo{}, fmt.Errorf("reading the rootDSE of %s: %v: %s", r.Cfg.JoinDC, err, strings.TrimSpace(string(out)))
+	}
+	info, err := parseRootDSE(string(out), r.Cfg.Realm)
+	if err != nil {
+		return info, fmt.Errorf("%s: %w", r.Cfg.JoinDC, err)
+	}
+	return info, nil
+}
+
+// checkSkew compares this host's clock with the target DC's (rootDSE
+// currentTime): Kerberos refuses more than 5 minutes.
+func (r *Runner) checkSkew(info joinDCInfo) error {
+	skew := time.Since(info.CurrentTime)
 	if skew < 0 {
 		skew = -skew
 	}
@@ -186,26 +250,36 @@ func (r *Runner) checkSkew(ctx context.Context) error {
 	return nil
 }
 
-var dnRE = regexp.MustCompile(`(?m)^defaultNamingContext: (.+)$`)
+// domainDN is the domain naming context of the realm (DC=example,DC=test).
+func (c *Config) domainDN() string {
+	return "DC=" + strings.ReplaceAll(c.DNSDomain(), ".", ",DC=")
+}
+
+// staleDCSearchArgs is the authenticated search for a computer named like
+// this DC: Kerberos only (no NTLM fallback, so nothing crackable crosses
+// the network and the server is authenticated), with the LDAP connection
+// signed and sealed, against the DC by its host name (Kerberos needs a
+// name, not an address). The base is derived from the realm, not read from
+// the unauthenticated rootDSE.
+func staleDCSearchArgs(c *Config, dcHost string) []string {
+	return []string{"-H", "ldap://" + dcHost, "--use-kerberos=required", "--option=client ldap sasl wrapping=seal",
+		"-U", c.Realm + `\` + c.JoinUser, "-b", c.domainDN(),
+		"(sAMAccountName=" + strings.ToUpper(c.Hostname) + "$)", "dn", "userAccountControl"}
+}
 
 // checkStaleDC refuses to join under the name of an existing computer (a
 // stale DC object from a lost host must be removed first, restore.md 2).
-func (r *Runner) checkStaleDC(ctx context.Context, env []string) error {
+// It fails closed: any error of the authenticated search stops the join.
+func (r *Runner) checkStaleDC(ctx context.Context, env []string, info joinDCInfo) error {
 	c := r.Cfg
-	out, err := exec.CommandContext(ctx, "/usr/bin/ldbsearch", "-H", "ldap://"+c.JoinDC, "-s", "base", "-b", "", "defaultNamingContext").CombinedOutput()
+	cmd := exec.CommandContext(ctx, "/usr/bin/ldbsearch", staleDCSearchArgs(c, info.HostName)...)
+	// The ticket stays in memory: no credential cache file is written.
+	cmd.Env = append(append(os.Environ(), env...), "KRB5CCNAME=MEMORY:sc-join-check")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("reading the rootDSE of %s: %v", c.JoinDC, err)
-	}
-	m := dnRE.FindStringSubmatch(string(out))
-	if m == nil {
-		return fmt.Errorf("%s returned no defaultNamingContext", c.JoinDC)
-	}
-	cmd := exec.CommandContext(ctx, "/usr/bin/ldbsearch", "-H", "ldap://"+c.JoinDC, "-U", c.Realm+`\`+c.JoinUser, "-k", "no",
-		"-b", strings.TrimSpace(m[1]), "(sAMAccountName="+strings.ToUpper(c.Hostname)+"$)", "dn", "userAccountControl")
-	cmd.Env = append(os.Environ(), env...)
-	out, err = cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("checking for an existing computer %s$ on %s: %v: %s", strings.ToUpper(c.Hostname), c.JoinDC, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("checking for an existing computer %s$ on %s (Kerberos, signed and sealed LDAP; the join needs "+
+			"%s to resolve and its KDC to answer at %s): %v: %s", strings.ToUpper(c.Hostname), info.HostName, info.HostName,
+			c.JoinDC, err, strings.TrimSpace(string(out)))
 	}
 	if strings.Contains(string(out), "\ndn: ") || strings.HasPrefix(string(out), "dn: ") {
 		return fmt.Errorf("the domain already has a computer named %s (a stale DC from a lost host?): remove it first "+

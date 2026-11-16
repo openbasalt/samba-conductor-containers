@@ -56,6 +56,12 @@ func (r *Runner) Start(ctx context.Context) error {
 	if err := os.MkdirAll(RunDir, 0o700); err != nil {
 		return err
 	}
+	if moved, err := moveLegacyInitialPassword(LegacyInitialPasswordFile, InitialPasswordFile); err != nil {
+		return fmt.Errorf("moving the generated Administrator password off the data volume: %w", err)
+	} else if moved {
+		r.logf("moved the generated Administrator password off the data volume to the container's tmpfs: read it once with " +
+			"`sc-dc-init show-initial-password` before the container restarts (it is not kept anywhere else)")
+	}
 	st, err := state.Load(StateFile)
 	switch {
 	case errors.Is(err, state.ErrNone):
@@ -377,7 +383,7 @@ func (r *Runner) startupWarnings(st *state.State) {
 		r.logf("WARNING: the host's kernel clock is not synchronized; keep the host's clock in sync (chrony, timesyncd): Kerberos fails beyond 5 minutes of skew")
 	}
 	if _, err := os.Stat(InitialPasswordFile); err == nil {
-		r.logf("NOTE: a generated Administrator password is in %s; read it with `sc-dc-init show-initial-password`, then `sc-dc-init forget-initial-password`", InitialPasswordFile)
+		r.logf("NOTE: a generated Administrator password waits on the tmpfs; read it once with `sc-dc-init show-initial-password` (lost when the container restarts)")
 	}
 	for _, s := range []string{"admin-password", "join-password", "age-identity"} {
 		if _, err := os.Stat(filepath.Join(SecretsDir, s)); err == nil {
