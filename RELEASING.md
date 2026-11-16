@@ -58,11 +58,14 @@ the pins move. Two scheduled workflows keep that moving:
   `scripts/bump-pins.sh`, which moves `DEBIAN_SNAPSHOT` to the day's
   snapshot.debian.org timestamp (after checking that the signed
   `InRelease` files are there) and the `DEBIAN_IMAGE`, `DISTROLESS_IMAGE`
-  and `GO_IMAGE` digests to what their tags name now, and keeps one pull
-  request open from the branch `deps/debian-pins`, with the `ci` workflow
-  dispatched on it. The pins stay timestamps and digests; they move only
-  when that pull request is merged. The workflow needs the repository
-  setting that allows GitHub Actions to create pull requests.
+  and `GO_IMAGE` digests to what their tags name now, pushes them to the
+  branch `deps/debian-pins` (only when they differ from what the branch
+  carries) with the `ci` workflow dispatched on it, and opens or updates
+  the pull request. The organization does not allow GitHub Actions to
+  create pull requests, so the run ends with a warning and a job summary
+  that gives the compare URL: a maintainer opens the pull request from it
+  by hand. The pins stay timestamps and digests; they move only when that
+  pull request is merged.
 
 When the scan reports a fixable finding, merge the pin pull request (after
 its `ci` run and a release dry run on the branch), raise `IMAGE_REVISION`
