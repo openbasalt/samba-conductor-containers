@@ -28,8 +28,13 @@ const (
 	StateFile = SambaDir + "/samba-conductor-container.json"
 	// CADir keeps the self-signed CA (key 0600) on the data volume.
 	CADir = SambaDir + "/sc-ca"
-	// InitialPasswordFile holds a generated Administrator password.
-	InitialPasswordFile = SambaDir + "/initial-admin-password"
+	// InitialPasswordFile holds a generated Administrator password on the
+	// container's tmpfs (never the data volume, whose backups and snapshots
+	// would keep it): gone on the next restart, and removed once shown.
+	InitialPasswordFile = RunDir + "/initial-admin-password"
+	// LegacyInitialPasswordFile is where earlier images kept it, on the
+	// data volume; a start moves it to InitialPasswordFile.
+	LegacyInitialPasswordFile = SambaDir + "/initial-admin-password"
 	// PreUpgradeDir keeps the copy taken before a Samba minor upgrade.
 	PreUpgradeDir = SambaDir + "/pre-upgrade"
 	// RestoreTarget is where a restore writes the restored tree.

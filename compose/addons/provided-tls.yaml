@@ -6,7 +6,7 @@
 # With the IdP add-on, also addons/idp-provided-tls.yaml.
 services:
   dc:
-    secrets: [admin-password, dc-tls-cert, dc-tls-key, dc-tls-ca]
+    secrets: [dc-tls-cert, dc-tls-key, dc-tls-ca]
 
   conductor-setup:
     secrets: [admin-password, dc-tls-ca, conductor-tls-cert, conductor-tls-key]

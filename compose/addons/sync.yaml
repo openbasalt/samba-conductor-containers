@@ -11,7 +11,7 @@
 # says so (docker compose logs sync-check).
 services:
   dc:
-    secrets: [admin-password, sync-ad-password]
+    secrets: [sync-ad-password]
 
   conductor:
     volumes:

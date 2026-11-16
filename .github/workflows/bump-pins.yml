@@ -1,0 +1,106 @@
+# Weekly pull request that advances the Debian inputs pinned in
+# versions.env (scripts/bump-pins.sh): DEBIAN_SNAPSHOT to the current day's
+# snapshot.debian.org timestamp, and the DEBIAN_IMAGE, DISTROLESS_IMAGE and
+# GO_IMAGE digests to what their tags name now. The pins stay fixed values
+# (never a floating tag or "latest"); only a reviewed merge moves them.
+#
+# The branch deps/debian-pins is rewritten on every run and one pull request
+# is kept open from it. Pull requests opened with the workflow token start
+# no pull_request runs, so the job dispatches the ci workflow on the branch
+# (builds, smoke test); the release workflow's dry run (scan gate) can be
+# started on it by hand. Needs the repository setting "Allow GitHub Actions
+# to create and approve pull requests". Nothing is built, pushed to a
+# registry or released here; no secret beyond the workflow token.
+name: bump-pins
+
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: "snapshot.debian.org timestamp (YYYYMMDDTHHMMSSZ); empty for today"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-pins
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      # Push the branch and open the pull request.
+      contents: write
+      pull-requests: write
+      # Dispatch ci on the branch.
+      actions: write
+    env:
+      BRANCH: deps/debian-pins
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          # This job pushes the branch with the workflow token.
+          persist-credentials: true
+      - id: bump
+        name: advance the pins
+        env:
+          SNAPSHOT: ${{ inputs.snapshot }}
+        run: |
+          set -o pipefail
+          args=()
+          if [ -n "$SNAPSHOT" ]; then
+            [[ "$SNAPSHOT" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || { echo "::error::snapshot must be YYYYMMDDTHHMMSSZ"; exit 1; }
+            args=(--snapshot "$SNAPSHOT")
+          fi
+          scripts/bump-pins.sh "${args[@]}" | tee "$RUNNER_TEMP/changes.txt"
+          if git diff --quiet -- versions.env; then
+            echo "changed=false" >>"$GITHUB_OUTPUT"
+            echo "Pins are current." >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >>"$GITHUB_OUTPUT"
+          fi
+      - name: pull request
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Advances the Debian inputs pinned in \`versions.env\` (scheduled, \`scripts/bump-pins.sh\`):"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/changes.txt"
+            echo '```'
+            echo
+            echo "Before merging: the ci run on this branch (dispatched by the bump-pins workflow) must pass;"
+            echo "run the release workflow on the branch (dry run) for the scan gate. A release built from"
+            echo "these pins with the same component versions needs a higher \`IMAGE_REVISION\`."
+          } >"$RUNNER_TEMP/body.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git commit -q -F - -- versions.env <<'EOF'
+          Advance the Debian snapshot and base image digests
+
+          Scheduled update by the bump-pins workflow (scripts/bump-pins.sh), so the
+          images pick up Debian security updates through a reviewed pin change.
+          EOF
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+          open="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$open" ]; then
+            gh pr edit "$open" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+              --title "Advance the Debian snapshot and base image digests" --body-file "$RUNNER_TEMP/body.md" || {
+              echo "::error::could not open the pull request (repository setting: allow GitHub Actions to create pull requests); the branch $BRANCH is pushed"
+              exit 1
+            }
+          fi
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          { echo "### Pins advanced"; echo; echo '```'; cat "$RUNNER_TEMP/changes.txt"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"

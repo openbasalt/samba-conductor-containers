@@ -18,7 +18,7 @@ services:
   dc:
     environment:
       SC_BACKUP: "on"
-    secrets: [admin-password, backup-account]
+    secrets: [backup-account]
     volumes:
       - backup-state:/var/lib/conductor-backup
       - ./backup-recipients.txt:/etc/sc/backup-recipients.txt:ro

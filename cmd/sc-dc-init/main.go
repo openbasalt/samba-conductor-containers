@@ -8,7 +8,7 @@
 //	sc-dc-init account provisioner [--ou DN]... [--google-first] [--name N] [--password-file F]
 //	                                 conductor-provisioner's account, delegated on the managed OUs
 //	sc-dc-init dns-name NAME...      add NAME.<domain> A <SC_HOST_IP>
-//	sc-dc-init show-initial-password | forget-initial-password
+//	sc-dc-init show-initial-password | forget-initial-password   (tmpfs; shown once)
 //	sc-dc-init version
 package main
 
@@ -44,8 +44,9 @@ const usage = `usage: sc-dc-init [COMMAND]
                                (default OU=People,<domain>; created when missing);
                                --google-first adds the rights of the Google-first plan
   dns-name NAME...             add NAME.<domain> A <SC_HOST_IP> (conductor, idp)
-  show-initial-password        print the generated Administrator password
-  forget-initial-password      delete it from the volume
+  show-initial-password        print the generated Administrator password once (it is
+                               kept on the container's tmpfs and removed as it is shown)
+  forget-initial-password      delete it without showing it
   version
 `
 
@@ -78,7 +79,9 @@ func run(args []string) int {
 			err = dc.DNSName(ctx, os.Stdout, c, args)
 		}
 	case "show-initial-password":
-		err = dc.ShowInitialPassword(os.Stdout)
+		if err = dc.ShowInitialPassword(os.Stdout); err == nil {
+			fmt.Fprintln(os.Stderr, "sc-dc-init: shown once and removed; keep it in your password manager")
+		}
 	case "forget-initial-password":
 		err = dc.ForgetInitialPassword(os.Stdout)
 	case "version", "--version":

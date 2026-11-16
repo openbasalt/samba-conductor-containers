@@ -69,16 +69,33 @@ missing; `--google-first` adds the rights of the Google-first plan),
 `sc-dc-init dns-name NAME...`,
 `sc-dc-init show-initial-password` and `forget-initial-password`.
 
+The domain Administrator password reaches the DC only at the first boot:
+the `admin-password` secret is mounted by `addons/provision.yaml`, which is
+used for that one start and never listed in `COMPOSE_FILE`; the next
+`docker compose up -d` recreates the DC without it, and the DC warns while
+any first-boot secret is still mounted. Without that secret the first boot
+generates a password and keeps it only on the container's tmpfs, never on
+the data volume: `sc-dc-init show-initial-password` prints it once and
+removes it, and a restart loses it (reset it then with `samba-tool user
+setpassword Administrator` inside the DC container). A password that an
+earlier image left on the data volume is moved to the tmpfs at the next
+start.
+
 ## Quick start (lab)
 
 ```sh
 cd compose
 cp .env.example .env          # domain, NetBIOS name, host name, this host's address, image tag
 ./make-secrets.sh             # random passwords in ./secrets (0600)
-docker compose up -d dc       # provisions the domain (about a minute)
+docker compose -f compose.yaml -f addons/provision.yaml up -d dc   # provisions the domain (about a minute)
 docker compose run --rm conductor-setup
-docker compose up -d
+docker compose up -d          # recreates the DC without the admin-password secret
 ```
+
+Add the other files of `COMPOSE_FILE` that change the DC (for example
+`-f addons/ipvlan.yaml`) before `addons/provision.yaml` in the first
+command. Once `conductor-setup` has run, move `./secrets/admin-password` to
+your password manager: the running stack does not read it again.
 
 The images come from `SC_IMAGE_PREFIX` (`docker.io/openbasalt/` in
 `.env.example`; `ghcr.io/openbasalt/` works the same) with the tag

@@ -1,0 +1,13 @@
+# Add-on for the first boot of a new domain only: gives the DC the
+# admin-password secret, the Administrator password it sets while it
+# provisions. Use it for that one start, never in COMPOSE_FILE:
+#   docker compose -f compose.yaml -f addons/provision.yaml up -d dc
+# (add the other files of COMPOSE_FILE before addons/provision.yaml when
+# they change the DC). The next `docker compose up -d` recreates the DC
+# without the secret; the domain on the volume is kept. Without this file
+# a first boot generates the password and keeps it on the container's
+# tmpfs until `sc-dc-init show-initial-password` shows it once; conductor
+# setup then needs it in ./secrets/admin-password.
+services:
+  dc:
+    secrets: [admin-password]

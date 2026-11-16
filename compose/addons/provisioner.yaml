@@ -16,7 +16,7 @@
 # provisioner-check says so (docker compose logs provisioner-check).
 services:
   dc:
-    secrets: [admin-password, provisioner-ad-password]
+    secrets: [provisioner-ad-password]
 
   conductor:
     volumes:

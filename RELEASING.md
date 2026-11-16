@@ -41,6 +41,34 @@ reviewed pull request put there:
 - `DEBIAN_SNAPSHOT`, `DEBIAN_IMAGE`, `DISTROLESS_IMAGE`, `GO_IMAGE`: the
   Debian packages and base images, by snapshot timestamp and digest.
 
+## Scheduled rebuild, rescan and pin updates
+
+The Debian packages and base images are pinned, so a plain rebuild
+installs the same versions: security updates reach the images only when
+the pins move. Two scheduled workflows keep that moving:
+
+- `scan` (Mondays, also by hand): builds the six images from `main` on
+  amd64 and arm64 and runs `scripts/release-scan.sh` with a fresh
+  vulnerability database. It fails on any fixable High or Critical
+  finding or secret, and uploads the trivy reports to code scanning under
+  `refs/heads/main`, so the alerts of `main` describe the current inputs
+  and close once fixed. It builds and scans only: nothing is pushed,
+  tagged or signed.
+- `bump-pins` (Mondays, also by hand with an optional timestamp): runs
+  `scripts/bump-pins.sh`, which moves `DEBIAN_SNAPSHOT` to the day's
+  snapshot.debian.org timestamp (after checking that the signed
+  `InRelease` files are there) and the `DEBIAN_IMAGE`, `DISTROLESS_IMAGE`
+  and `GO_IMAGE` digests to what their tags name now, and keeps one pull
+  request open from the branch `deps/debian-pins`, with the `ci` workflow
+  dispatched on it. The pins stay timestamps and digests; they move only
+  when that pull request is merged. The workflow needs the repository
+  setting that allows GitHub Actions to create pull requests.
+
+When the scan reports a fixable finding, merge the pin pull request (after
+its `ci` run and a release dry run on the branch), raise `IMAGE_REVISION`
+and cut a patch release. `scripts/bump-pins.sh --snapshot <timestamp>` does
+the same locally.
+
 ## What a release run does
 
 1. Plan: checks the tag and the inputs above.

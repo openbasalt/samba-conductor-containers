@@ -52,16 +52,20 @@ domain_sid() {
     -b DC=ci,DC=example,DC=test objectSid | awk '/^objectSid:/{print $2}'
 }
 
-docker compose up -d dc
+# The first boot is the only start that mounts admin-password
+# (addons/provision.yaml).
+COMPOSE_FILE="compose.yaml:addons/provisioner.yaml:addons/provision.yaml" docker compose up -d dc
 wait_healthy
 docker compose exec -T dc sc-dc-init health
 [ "$(docker compose logs dc | grep -c 'provisioning CI.EXAMPLE.TEST')" = 1 ] || fail "provisioning not logged once"
+docker compose exec -T dc test -e /run/secrets/admin-password || fail "the first boot did not get admin-password"
 sid1="$(domain_sid)"
 [ -n "$sid1" ] || fail "no domain SID"
 ok "fresh provision, healthy ($sid1)"
 
 # T3: a recreated container runs the domain on the volume and never
-# provisions again.
+# provisions again, without admin-password (nor its file on the host).
+mv secrets/admin-password secrets/admin-password.kept
 docker compose up -d --force-recreate dc
 wait_healthy
 docker compose exec -T dc sc-dc-init health
@@ -69,7 +73,12 @@ logs="$(docker compose logs dc)"
 ! grep -q 'provisioning CI.EXAMPLE.TEST' <<<"$logs" || fail "provisioned again after recreate"
 grep -q 'SC_MODE=provision ignored' <<<"$logs" || fail "recreate did not report the existing domain"
 [ "$(domain_sid)" = "$sid1" ] || fail "domain SID changed after recreate"
-ok "recreate keeps the domain"
+! docker compose exec -T dc test -e /run/secrets/admin-password || fail "admin-password still mounted after the first boot"
+! grep -q 'first-boot secret "admin-password" is still mounted' <<<"$logs" ||
+  fail "the DC still reports admin-password as mounted"
+docker compose exec -T dc test ! -e /var/lib/samba/initial-admin-password || fail "a password file is on the data volume"
+mv secrets/admin-password.kept secrets/admin-password
+ok "recreate keeps the domain, without the admin-password secret"
 
 # T10: security assertions on the running DC.
 id="$(docker compose ps -q dc)"

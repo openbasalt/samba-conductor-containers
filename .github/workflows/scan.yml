@@ -1,0 +1,68 @@
+# Weekly rebuild and rescan of the images from main, so findings that
+# appear after a release (new advisories against the pinned packages) show
+# up without waiting for one. Per architecture on native runners: the six
+# images built from the inputs pinned in versions.env, then
+# scripts/release-scan.sh (trivy and grype with a fresh vulnerability
+# database; the job fails on fixable High/Critical or a secret, which is
+# the signal to advance the pins). The trivy reports go to code scanning
+# under main's ref, with the same categories as the release workflow, so
+# main's alerts describe the current inputs and close when fixed.
+#
+# Build and scan only: nothing is pushed, tagged, signed or released; no
+# secret beyond the workflow token. Actions are pinned by commit SHA,
+# tools with checksums (scripts/release-tools.sh).
+name: scan
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scan-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      # trivy reports in code scanning (main only).
+      security-events: write
+    env:
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: pinned release tools (checksums verified)
+        run: |
+          scripts/release-tools.sh "$RUNNER_TEMP/tools"
+          echo "$RUNNER_TEMP/tools" >>"$GITHUB_PATH"
+      - name: build the six images (packages from the APT repository, verified; not pushed)
+        run: ./build-local.sh --tag scan
+      - name: scan gate and SBOMs
+        run: scripts/release-scan.sh scan "$ARCH" out
+      - name: trivy reports to code scanning (main)
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && hashFiles('out/scan/*.sarif') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-sarif.sh out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: scan-${{ matrix.arch }}
+          path: out/
+          retention-days: 30

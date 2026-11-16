@@ -14,7 +14,7 @@
 #     SC_DC_ADDRESS=192.0.2.230          in SC_NET_SUBNET, not in use
 #     SC_CONDUCTOR_ADDRESS=192.0.2.231   in SC_NET_SUBNET, not in use
 #     SC_HOST_IP=192.0.2.230             the same as SC_DC_ADDRESS (the DC advertises it)
-#   docker compose up -d dc
+#   docker compose -f compose.yaml -f addons/ipvlan.yaml -f addons/provision.yaml up -d dc
 #   docker compose exec dc samba-tool dns add 127.0.0.1 <SC_DNS_DOMAIN> conductor A <SC_CONDUCTOR_ADDRESS> -P
 #   docker compose run --rm conductor-setup
 #   docker compose up -d

@@ -16,7 +16,7 @@ GOVULNCHECK := $(TOOLS_DIR)/govulncheck-$(GOVULNCHECK_VERSION)
 VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build test check fmt vet staticcheck vulncheck tools images compose-tag frontend-pin
+.PHONY: build test check fmt vet staticcheck vulncheck tools images compose-tag frontend-pin bump-pins-test
 
 build:
 	mkdir -p bin
@@ -26,7 +26,12 @@ build:
 test:
 	go test -race ./...
 
-check: fmt vet staticcheck vulncheck test compose-tag frontend-pin
+check: fmt vet staticcheck vulncheck test compose-tag frontend-pin bump-pins-test
+
+# scripts/bump-pins.sh (the weekly pin pull request) on a copy of
+# versions.env, offline.
+bump-pins-test:
+	scripts/check-bump-pins.sh
 
 # The compose files default to IMAGE_VERSION (versions.env).
 compose-tag:
