@@ -151,18 +151,47 @@ services:
     pids_limit: 256
     logging: *logging
 
+  # One-shot at every start, before conductor-check: on a deployment set up
+  # before conductor keyed its audit chain (an upgrade from an earlier
+  # image) it creates the audit key once, root 0600 on conductor-etc as the
+  # packages do, and hands it over. An existing key is kept, and one it
+  # cannot read stops the start instead of being replaced. Before
+  # conductor-setup it does nothing. No network, root only to write the
+  # root-owned key and the conductor-owned copy.
+  conductor-keys:
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["/usr/bin/sc-setup", "conductor-keys"]
+    command: []
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: *security
+    network_mode: none
+    volumes:
+      - conductor-etc:/etc/conductor
+      - conductor-cred:/run/credentials/conductor
+    healthcheck:
+      disable: true
+    pids_limit: 16
+    logging: *logging
+
   # One-shot guard of conductor: it starts only once conductor-setup has
-  # written its configuration and handed over the TOTP key. Without them
-  # this exits with instructions, compose leaves conductor created but not
-  # started, and nothing restarts in a loop.
+  # written its configuration and handed over the TOTP and audit keys.
+  # Without them this exits with instructions, compose leaves conductor
+  # created but not started, and nothing restarts in a loop.
   conductor-check:
     image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
     user: "2093:2093"
     restart: "no"
+    depends_on:
+      conductor-keys:
+        condition: service_completed_successfully
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
-        for f in /etc/conductor/conductor.toml /run/credentials/conductor/totp-key; do
+        for f in /etc/conductor/conductor.toml /run/credentials/conductor/totp-key /run/credentials/conductor/audit-key; do
         [ -r "$$f" ] && continue;
         echo "conductor is not configured yet ($$f is missing): run 'docker compose run --rm conductor-setup'
         (README, Quick start), then 'docker compose up -d'" >&2;
@@ -181,7 +210,7 @@ services:
     pids_limit: 16
     logging: *logging
 
-  # One-shot: conductor setup (as root), the TOTP key handed over.
+  # One-shot: conductor setup (as root), the TOTP and audit keys handed over.
   #   docker compose run --rm conductor-setup
   conductor-setup:
     image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
