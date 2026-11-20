@@ -1,7 +1,7 @@
 // Command sc-setup is the one-shot configuration of the Samba Conductor
 // service containers (run as root, once, before the services start):
 //
-//	sc-setup conductor | idp | sync | backup | provisioner | mail
+//	sc-setup conductor | conductor-keys | idp | sync | backup | provisioner | mail
 //	sc-setup version
 package main
 
@@ -18,12 +18,14 @@ import (
 
 var version = "dev"
 
-const usage = `usage: sc-setup conductor|idp|sync|backup|provisioner|mail
+const usage = `usage: sc-setup conductor|conductor-keys|idp|sync|backup|provisioner|mail
 
 One-shot configuration of a service container (as root, in the service's own
 image, under the compose "setup" profile). Configuration comes from SC_*
 variables, secrets from files in /run/secrets; see the containers
-documentation for each command's variables and secrets.
+documentation for each command's variables and secrets. conductor-keys runs
+at every start of the stack: it creates conductor's audit key on a
+deployment set up before it existed (never replacing one) and hands it over.
 `
 
 func main() {
@@ -43,6 +45,8 @@ func main() {
 	switch os.Args[1] {
 	case "conductor":
 		err = s.Conductor(ctx)
+	case "conductor-keys":
+		err = s.ConductorKeys()
 	case "idp":
 		err = s.IDP(ctx)
 	case "sync":

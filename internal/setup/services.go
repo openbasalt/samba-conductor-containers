@@ -13,8 +13,8 @@ import (
 var groupRE = regexp.MustCompile(`^[^"\\\x00-\x1f]{1,64}$`)
 
 // Conductor configures conductor: web certificate, `conductor setup`
-// (non-interactive, the Administrator password on stdin), and the TOTP key
-// handed over to the conductor container.
+// (non-interactive, the Administrator password on stdin), and the TOTP and
+// audit keys handed over to the conductor container.
 func (s *Setup) Conductor(ctx context.Context) error {
 	realm, dcHost, err := s.common()
 	if err != nil {
@@ -90,10 +90,18 @@ func (s *Setup) Conductor(ctx context.Context) error {
 		return fmt.Errorf("the TOTP key conductor setup writes: %w (%s exists without it: delete conductor.toml from the "+
 			"conductor-etc volume and run conductor-setup again)", err, cfg)
 	}
-	if err := s.handOver("/run/credentials/conductor", UIDConductor, map[string][]byte{"totp-key": totp}); err != nil {
+	// conductor setup creates the audit key from conductor 0.3.0 on; with
+	// an earlier conductor, or on a volume set up before it, it is created
+	// here, the way the packages do.
+	audit, err := s.ensureAuditKey()
+	if err != nil {
 		return err
 	}
-	s.logf("conductor configured; keep a copy of %s/credentials/totp-key offline (restore.md section 0)", etc)
+	if err := s.handOver("/run/credentials/conductor", UIDConductor, map[string][]byte{"totp-key": totp, "audit-key": audit}); err != nil {
+		return err
+	}
+	s.logf("conductor configured; keep a copy of %[1]s/credentials/totp-key and %[1]s/credentials/audit-key offline "+
+		"(restore.md section 0)", etc)
 	return nil
 }
 

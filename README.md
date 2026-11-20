@@ -106,7 +106,12 @@ release under test, or an empty `SC_IMAGE_PREFIX` and the `--tag` of
 be healthy and prints a one-time enrollment link for the first
 administrator. Until it has run, conductor is created but not started: the
 one-shot `conductor-check` stops `docker compose up -d` with an error, and
-`docker compose logs conductor-check` says what to run. Add-ons are listed
+`docker compose logs conductor-check` says what to run. conductor keys
+its audit log with a key that `conductor-setup` creates next to the TOTP
+key (`/etc/conductor/credentials/audit-key` on the `conductor-etc`
+volume, root, 0600); on a stack set up by an earlier image, the one-shot
+`conductor-keys` creates it at the first `docker compose up -d` and never
+replaces an existing one. Keep an offline copy of both keys. Add-ons are listed
 in `COMPOSE_FILE` in `.env` (`addons/idp.yaml`, `sync.yaml`, `backup.yaml`,
 `provisioner.yaml`, `mail.yaml`, `host-network.yaml`, `ipvlan.yaml`, `macvlan.yaml`, `provided-tls.yaml`,
 `join.yaml`, `restore.yaml`); each file starts with the steps it needs.
