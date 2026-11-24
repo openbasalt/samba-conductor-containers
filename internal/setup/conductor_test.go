@@ -15,7 +15,9 @@ import (
 // fakeConductor stands in for /usr/bin/conductor: FAKE_MODE=fail exits 1,
 // noconfig exits 0 without writing anything, ok writes the TOTP key and
 // conductor.toml into FAKE_ETC the way conductor setup does (key first)
-// and ends with the packages' next step, as conductor setup does.
+// and ends with the packages' next step, as conductor setup does. With
+// FAKE_AUDIT set it also writes that audit key unless one exists, as
+// conductor setup does from 0.3.0 on.
 const fakeConductor = `#!/bin/sh
 case "$FAKE_MODE" in
 fail) echo "conductor: setup: ldap: connection refused" >&2; exit 1 ;;
@@ -23,6 +25,9 @@ noconfig) exit 0 ;;
 ok)
   mkdir -p "$FAKE_ETC/credentials"
   echo key >"$FAKE_ETC/credentials/totp-key"
+  if [ -n "$FAKE_AUDIT" ] && [ ! -e "$FAKE_ETC/credentials/audit-key" ]; then
+    (umask 077 && echo "$FAKE_AUDIT" >"$FAKE_ETC/credentials/audit-key")
+  fi
   echo '[server]' >"$FAKE_ETC/conductor.toml"
   echo "configuration written to $FAKE_ETC/conductor.toml"
   echo "enrollment link on stderr" >&2
@@ -82,7 +87,7 @@ func TestConductorSetupOK(t *testing.T) {
 	if !strings.Contains(got, want) {
 		t.Errorf("output lacks %q:\n%s", want, got)
 	}
-	for _, p := range []string{"etc/conductor/conductor.toml", "run/credentials/conductor/totp-key"} {
+	for _, p := range []string{"etc/conductor/conductor.toml", "run/credentials/conductor/totp-key", "run/credentials/conductor/audit-key"} {
 		if _, err := os.Stat(filepath.Join(root, p)); err != nil {
 			t.Errorf("%s: %v", p, err)
 		}

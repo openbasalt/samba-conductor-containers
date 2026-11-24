@@ -104,6 +104,9 @@ if docker compose up -d conductor 2>/dev/null; then
 fi
 docker compose logs conductor-check | grep -q 'conductor is not configured yet' ||
   fail "conductor-check did not explain the missing configuration"
+# conductor-keys runs first and, before conductor-setup, creates nothing.
+docker compose logs conductor-keys | grep -q 'conductor is not set up yet' ||
+  fail "conductor-keys did not run before conductor-check"
 cid="$(docker compose ps -aq conductor)"
 [ -n "$cid" ] || fail "no conductor container"
 [ "$(docker inspect -f '{{.State.Status}} {{.RestartCount}}' "$cid")" = "created 0" ] ||
