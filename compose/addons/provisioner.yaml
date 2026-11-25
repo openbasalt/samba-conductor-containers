@@ -23,7 +23,7 @@ services:
       - provisioner-run:/run/conductor-provisioner
 
   provisioner:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-provisioner:${SC_TAG:-0.2.0}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-provisioner:${SC_TAG:-0.3.0}
     user: "2098:2098"
     # The conductor group: the API socket goes to it (0660), and only
     # conductor's UID is admitted on it.
@@ -62,7 +62,7 @@ services:
   # state key. Without them this exits with instructions and compose leaves
   # provisioner created but not started (no restart loop).
   provisioner-check:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.3.0}
     user: "2098:2098"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
@@ -95,7 +95,7 @@ services:
   # privileged), the account password and the state key handed over,
   # conductor's [provisioner] section.
   provisioner-setup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor-provisioner:${SC_TAG:-0.2.0}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor-provisioner:${SC_TAG:-0.3.0}
     profiles: [setup]
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "provisioner"]
