@@ -71,8 +71,9 @@ missing; `--google-first` adds the rights of the Google-first plan),
 
 The domain Administrator password reaches the DC only at the first boot:
 the `admin-password` secret is mounted by `addons/provision.yaml`, which is
-used for that one start and never listed in `COMPOSE_FILE`; the next
-`docker compose up -d` recreates the DC without it, and the DC warns while
+used for that one start and never listed in `COMPOSE_FILE`; `docker
+compose run --rm conductor-setup` (or any later `docker compose up -d`)
+recreates the DC without it, and the DC warns while
 any first-boot secret is still mounted. Without that secret the first boot
 generates a password and keeps it only on the container's tmpfs, never on
 the data volume: `sc-dc-init show-initial-password` prints it once and
@@ -88,8 +89,8 @@ cd compose
 cp .env.example .env          # domain, NetBIOS name, host name, this host's address, image tag
 ./make-secrets.sh             # random passwords in ./secrets (0600)
 docker compose -f compose.yaml -f addons/provision.yaml up -d dc   # provisions the domain (about a minute)
-docker compose run --rm conductor-setup
-docker compose up -d          # recreates the DC without the admin-password secret
+docker compose run --rm conductor-setup   # recreates the DC without the admin-password secret
+docker compose up -d          # starts conductor
 ```
 
 Add the other files of `COMPOSE_FILE` that change the DC (for example
@@ -109,10 +110,11 @@ one-shot `conductor-check` stops `docker compose up -d` with an error, and
 `docker compose logs conductor-check` says what to run. conductor keys
 its audit log with a key that `conductor-setup` creates next to the TOTP
 key (`/etc/conductor/credentials/audit-key` on the `conductor-etc`
-volume, root, 0600); on a stack set up by an earlier image, the one-shot
-`conductor-keys` creates it at the first `docker compose up -d` and never
-replaces an existing one. Keep an offline copy of both keys. Add-ons are listed
-in `COMPOSE_FILE` in `.env` (`addons/idp.yaml`, `sync.yaml`, `backup.yaml`,
+volume, root, 0600); on a stack set up by an earlier release, the one-shot
+`conductor-keys` of this release's `compose.yaml` creates it at the first
+`docker compose up -d` and never replaces an existing one (see
+Upgrading). Keep an offline copy of both keys. Add-ons are listed in
+`COMPOSE_FILE` in `.env` (`addons/idp.yaml`, `sync.yaml`, `backup.yaml`,
 `provisioner.yaml`, `mail.yaml`, `host-network.yaml`, `ipvlan.yaml`, `macvlan.yaml`, `provided-tls.yaml`,
 `join.yaml`, `restore.yaml`); each file starts with the steps it needs.
 The idp, sync, backup and provisioner add-ons hold their service back the
@@ -127,6 +129,40 @@ conductor-provisioner) and `mail.yaml` (`mail-setup` writes conductor's
 interface (`SC_NET_PARENT`, `SC_NET_MODE`, `SC_NET_SUBNET`,
 `SC_NET_GATEWAY`, `SC_NET_RANGE`), with fixed addresses for the DC and
 conductor on the LAN.
+
+## Upgrading
+
+The compose files and the images of a release go together: a compose file
+of one release can lack a service, a volume or a mount that the images of
+a later release need. Upgrade the compose checkout to the release tag
+first, keeping your `.env` and `secrets/` (both are untracked), then pull
+the images:
+
+```sh
+git fetch --tags
+git checkout v0.3.0           # the release you install
+cd compose
+# set SC_TAG in .env to that release (or remove it: the default is the checkout's release)
+docker compose pull
+docker compose up -d
+```
+
+Take a backup run before, and read the upgrade notes of the components
+([upgrading.md](https://github.com/openbasalt/samba-conductor-docs/blob/main/upgrading.md))
+and the Upgrades section of
+[containers.md](https://github.com/openbasalt/samba-conductor-docs/blob/main/containers.md#upgrades).
+
+Upgrading to 0.3.0: conductor 0.3.0 does not start without its audit key,
+which the one-shot `conductor-keys` of the 0.3.0 `compose.yaml` creates
+once. With a compose checkout from 0.2.0 and only `SC_TAG` changed,
+`docker compose up -d` exits 0 while conductor restarts in a loop, its
+log ending in `/run/credentials/conductor/audit-key: no such file or
+directory`. The database is not harmed: check out `v0.3.0` and run
+`docker compose up -d` again. Then keep an offline copy of
+`/etc/conductor/credentials/audit-key` (on the `conductor-etc` volume)
+with the TOTP key. Right after the upgrade, `docker compose exec
+conductor conductor audit verify` exits 1 with "audit chain not keyed
+yet" until the first audited event, such as a sign-in.
 
 ## Building
 

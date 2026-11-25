@@ -6,8 +6,10 @@
 # install), never in these containers.
 #   COMPOSE_FILE=compose.yaml:addons/backup.yaml
 #   ./backup-recipients.txt: one age recipient per line (operators' offline keys, drill host)
-#   secrets/backup-account (make-secrets.sh), secrets/s3 (access_key_id/secret_access_key TOML)
-#   SC_BACKUP_S3_ENDPOINT, SC_BACKUP_S3_BUCKET (or SC_BACKUP_LOCAL_DIR) in .env
+#   secrets/backup-account (make-secrets.sh), secrets/s3 (access_key_id/secret_access_key TOML);
+#     backup-setup mounts secrets/s3 in every case: create it empty for a local destination only
+#   SC_BACKUP_S3_ENDPOINT, SC_BACKUP_S3_BUCKET (or SC_BACKUP_LOCAL_DIR=/var/backups/conductor-backup,
+#     the backup-local volume) in .env
 #   docker compose up -d dc
 #   docker compose exec dc sc-dc-init account backup
 #   docker compose run --rm backup-setup                 (prints the DC's public signing key)
