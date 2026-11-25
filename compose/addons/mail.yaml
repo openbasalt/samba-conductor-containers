@@ -15,7 +15,7 @@ services:
   # One-shot: conductor's [mail] section, the relay password handed over
   # as conductor's smtp-password credential.
   mail-setup:
-    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.2.0}
+    image: ${SC_IMAGE_PREFIX:-}samba-conductor:${SC_TAG:-0.3.0}
     profiles: [setup]
     user: "0:0"
     entrypoint: ["/usr/bin/sc-setup", "mail"]
