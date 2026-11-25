@@ -2,7 +2,8 @@
 # managed from conductor's "Single sign-on" section, with conductor's
 # second factor and shared passkeys (WebAuthn RP ID = the domain).
 #   COMPOSE_FILE=compose.yaml:addons/idp.yaml
-#   docker compose exec dc sc-dc-init account idp       (needs secrets/idp-ad-password)
+#   docker compose up -d dc                          (recreates the DC with secrets/idp-ad-password)
+#   docker compose exec dc sc-dc-init account idp       (reads that secret)
 #   docker compose exec dc sc-dc-init dns-name conductor idp
 #   docker compose run --rm idp-setup                (waits for a healthy DC)
 #   docker compose up -d

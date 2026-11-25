@@ -7,8 +7,9 @@
 #   COMPOSE_FILE=compose.yaml:addons/provisioner.yaml:addons/mail.yaml
 #   SC_PROVISIONER_OUS in .env: the managed OUs, separated by ";"
 #     (default OU=People,<domain>, created when missing)
+#   docker compose up -d dc                          (recreates the DC with secrets/provisioner-ad-password)
 #   docker compose exec dc sc-dc-init account provisioner [--ou DN]... [--google-first]
-#     (needs secrets/provisioner-ad-password; the same OUs as SC_PROVISIONER_OUS)
+#     (reads that secret; the same OUs as SC_PROVISIONER_OUS)
 #   docker compose run --rm provisioner-setup        (after conductor-setup; waits for a healthy DC)
 #   docker compose up -d
 #   docker compose restart conductor                 (loads the section provisioner-setup enabled)

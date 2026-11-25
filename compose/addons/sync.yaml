@@ -3,7 +3,8 @@
 # (no systemd timer in a container). Starts in dry-run.
 #   COMPOSE_FILE=compose.yaml:addons/sync.yaml
 #   SC_SYNC_EMAIL_DOMAIN and SC_SYNC_GOOGLE_ADMIN in .env
-#   docker compose exec dc sc-dc-init account sync      (needs secrets/sync-ad-password)
+#   docker compose up -d dc                          (recreates the DC with secrets/sync-ad-password)
+#   docker compose exec dc sc-dc-init account sync      (reads that secret)
 #   docker compose run --rm sync-setup               (waits for a healthy DC)
 #   docker compose up -d
 #   docker compose restart conductor                 (loads the section sync-setup enabled)
